@@ -13,7 +13,7 @@ use crate::{
     templates::{
         PageId,
         auth::User,
-        platform::opportunities::{OpportunityHomePage, prototype_nodes},
+        platform::opportunities::{OpportunityHomePage, prototype_nodes, serialize_json_for_script},
     },
 };
 
@@ -25,7 +25,7 @@ pub(crate) async fn page(
     let template = OpportunityHomePage {
         auth_provider: session.get(AUTH_PROVIDER_KEY).await?,
         cfg: cfg.into(),
-        nodes_json: serde_json::to_string(&nodes)?,
+        nodes_json: serialize_json_for_script(&nodes)?,
         nodes,
         page_id: PageId::Opportunities,
         user: User::default(),
@@ -59,6 +59,7 @@ mod tests {
         let html =
             String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(html.contains("界面原型数据，不代表真实项目"));
+        assert!(html.contains("data-opportunity-id=\"proto-gd-01\""));
         assert!(html.contains("id=\"opportunity-fallback\""));
         assert!(html.contains("aria-live=\"polite\""));
     }

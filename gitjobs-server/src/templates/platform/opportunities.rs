@@ -128,3 +128,31 @@ pub(crate) fn prototype_nodes() -> Vec<OpportunityNode> {
         },
     ]
 }
+
+pub(crate) fn serialize_json_for_script<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
+    let json = serde_json::to_string(value)?;
+    Ok(json.replace('<', r"\u003c"))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Serialize;
+
+    use super::serialize_json_for_script;
+
+    #[derive(Serialize)]
+    struct Payload<'a> {
+        title: &'a str,
+    }
+
+    #[test]
+    fn script_json_escapes_html_tag_openers() {
+        let json = serialize_json_for_script(&Payload {
+            title: "</script><script>alert('unsafe')</script>",
+        })
+        .unwrap();
+
+        assert!(!json.contains("</script>"));
+        assert!(json.contains(r"\u003c/script>"));
+    }
+}
