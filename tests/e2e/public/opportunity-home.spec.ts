@@ -48,4 +48,31 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.locator("#opportunity-status")).toHaveText(/没有符合条件的原型机会/);
     await expect(page.getByRole("button", { name: "撤销上一步条件修改" })).toBeEnabled();
   });
+
+  test("renders explainable constellation encodings on desktop", async ({ page }) => {
+    await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+    await expect(page.getByText("颜色表示项目类型")).toBeVisible();
+    await expect(page.getByText("光环表示可信度")).toBeVisible();
+    await expect(page.getByText("脉冲表示截止紧迫度")).toBeVisible();
+    await expect(page.locator("#opportunity-status")).toContainText("6 条");
+  });
+
+  test("makes the card flow primary with reduced motion", async ({ browser }) => {
+    const context = await browser.newContext({
+      reducedMotion: "reduce",
+      viewport: { width: 1280, height: 800 },
+    });
+    const page = await context.newPage();
+    await navigateWithRetries(page, "/opportunities", "reduced-motion opportunities");
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph")).toBeHidden();
+    await expect(page.locator("[data-opportunity-card]:visible")).toHaveCount(6);
+    await context.close();
+  });
+
+  test("uses the opportunity card flow on mobile", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("[data-opportunity-card]:visible").first()).toContainText("可信度");
+  });
 });

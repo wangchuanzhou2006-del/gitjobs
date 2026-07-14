@@ -10,28 +10,22 @@
     {% include "platform/components/exploration_rail.html" %}
     <main id="main-content" class="opportunity-main">
       {% include "platform/components/ai_command_bar.html" %}
-      <p role="note">界面原型数据，不代表真实项目</p>
-      <section id="opportunity-fallback" aria-label="机会列表">
-        {% for node in nodes %}
-          <article data-opportunity-card data-opportunity-id="{{ node.id }}">{{ node.title }} · {{ node.kind.label() }}</article>
-        {% endfor %}
-      </section>
-      <p id="opportunity-status" aria-live="polite">当前展示 {{ nodes.len() }} 条原型机会</p>
+      {% include "platform/components/opportunity_graph.html" %}
+      {% include "platform/components/opportunity_fallback.html" %}
       {# djlint:off #}
       <script id="opportunity-data" type="application/json">{{ nodes_json|safe }}</script>
       {# djlint:on #}
     </main>
   </div>
+  <script src="/static/vendor/js/echarts.v6.0.0.min.js"></script>
   <script type="module">
-    import {
-      initializeAICommandBar
-    } from "/static/js/platform/ai-command-bar.js";
-    import {
-      initializeExplorationRail
-    } from "/static/js/platform/exploration-rail.js";
+    import { initializeExplorationRail } from "/static/js/platform/exploration-rail.js";
+    import { initializeAICommandBar } from "/static/js/platform/ai-command-bar.js";
+    import { initializeOpportunityGraph } from "/static/js/platform/opportunity-graph.js";
 
-    const nodes = JSON.parse(document.getElementById("opportunity-data")?.textContent || "[]");
+    const nodes = JSON.parse(document.getElementById("opportunity-data").textContent);
     initializeExplorationRail();
+    initializeOpportunityGraph(nodes);
     initializeAICommandBar(nodes);
   </script>
 {% endblock content %}
