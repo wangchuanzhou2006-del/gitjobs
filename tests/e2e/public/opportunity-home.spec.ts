@@ -35,6 +35,14 @@ test.describe("opportunity constellation foundation", () => {
     await expect(chips).toHaveCount(5);
     await expect(page.locator("#opportunity-status")).toContainText("1 条");
     await expect(page.locator("[data-opportunity-card]:visible")).toHaveCount(1);
+    const graphNodeCount = await page.evaluate(() => {
+      const host = document.getElementById("opportunity-graph");
+      const chart = (window as any).echarts.getInstanceByDom(host);
+      return chart
+        .getOption()
+        .series.reduce((count: number, series: { data: unknown[] }) => count + series.data.length, 0);
+    });
+    expect(graphNodeCount).toBe(1);
     await chips.filter({ hasText: "广东" }).click();
     await expect(page.locator("#opportunity-status")).toContainText("2 条");
     await page.getByRole("button", { name: "撤销上一步条件修改" }).click();
@@ -55,6 +63,21 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.getByText("光环表示可信度")).toBeVisible();
     await expect(page.getByText("脉冲表示截止紧迫度")).toBeVisible();
     await expect(page.locator("#opportunity-status")).toContainText("6 条");
+    const encoding = await page.evaluate(() => {
+      const host = document.getElementById("opportunity-graph");
+      const option = (window as any).echarts.getInstanceByDom(host).getOption();
+      return {
+        renderMode: option.tooltip[0].renderMode,
+        periods: option.series.map(
+          (series: { rippleEffect: { period: number } }) => series.rippleEffect.period,
+        ),
+        nodeCount: option.series.reduce(
+          (count: number, series: { data: unknown[] }) => count + series.data.length,
+          0,
+        ),
+      };
+    });
+    expect(encoding).toEqual({ renderMode: "richText", periods: [1.8, 4.2], nodeCount: 6 });
   });
 
   test("makes the card flow primary with reduced motion", async ({ browser }) => {
@@ -66,7 +89,9 @@ test.describe("opportunity constellation foundation", () => {
     await navigateWithRetries(page, "/opportunities", "reduced-motion opportunities");
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
     await expect(page.locator("#opportunity-graph")).toBeHidden();
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
     await expect(page.locator("[data-opportunity-card]:visible")).toHaveCount(6);
+    await expect(page.getByText("界面原型数据，不代表真实项目", { exact: true })).toBeVisible();
     await context.close();
   });
 
@@ -74,5 +99,65 @@ test.describe("opportunity constellation foundation", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
     await expect(page.locator("[data-opportunity-card]:visible").first()).toContainText("可信度");
+  });
+
+  test("uses fallback when data saver is enabled", async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "connection", {
+        configurable: true,
+        value: { saveData: true },
+      });
+    });
+    const page = await context.newPage();
+    await navigateWithRetries(page, "/opportunities", "data-saver opportunities");
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
+    await expect(page.getByText("界面原型数据，不代表真实项目", { exact: true })).toBeVisible();
+    await context.close();
+  });
+
+  test("uses fallback on low-memory devices", async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "deviceMemory", { configurable: true, value: 4 });
+    });
+    const page = await context.newPage();
+    await navigateWithRetries(page, "/opportunities", "low-memory opportunities");
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
+    await expect(page.getByText("界面原型数据，不代表真实项目", { exact: true })).toBeVisible();
+    await context.close();
+  });
+
+  test("uses fallback when ECharts is unavailable", async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await context.newPage();
+    await page.route("**/echarts.v6.0.0.min.js", (route) => route.abort());
+    await navigateWithRetries(page, "/opportunities", "no-echarts opportunities");
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
+    await expect(page.getByText("界面原型数据，不代表真实项目", { exact: true })).toBeVisible();
+    await context.close();
+  });
+
+  test("disposes and rebuilds the constellation across responsive fallback", async ({ page }) => {
+    await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "constellation");
+    await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+  });
+
+  test("responds immediately when reduced-motion preference changes", async ({ page }) => {
+    await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "fallback");
+    await expect(page.locator("#opportunity-graph canvas")).toHaveCount(0);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "constellation");
+    await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
   });
 });

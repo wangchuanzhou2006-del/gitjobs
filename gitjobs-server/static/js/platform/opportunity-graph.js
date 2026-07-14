@@ -6,9 +6,11 @@ const TYPE_COLORS = {
   stall: "#ff7a3d",
 };
 
+const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 export const shouldUseFallback = () =>
   window.innerWidth < 768 ||
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+  reducedMotionQuery.matches ||
   navigator.connection?.saveData === true ||
   (typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4) ||
   !window.echarts;
@@ -69,7 +71,11 @@ export const initializeOpportunityGraph = (initialNodes) => {
       {
         animation: true,
         backgroundColor: "transparent",
-        tooltip: { trigger: "item", formatter: ({ data: item }) => item.name },
+        tooltip: {
+          trigger: "item",
+          renderMode: "richText",
+          formatter: ({ data: item }) => item.name,
+        },
         xAxis: { min: 0, max: 100, show: false },
         yAxis: { min: 0, max: 100, show: false },
         series: [
@@ -93,6 +99,7 @@ export const initializeOpportunityGraph = (initialNodes) => {
 
   render(initialNodes);
   window.addEventListener("opportunity:filters-changed", ({ detail }) => render(detail.nodes));
+  reducedMotionQuery.addEventListener("change", () => render(currentNodes));
   window.addEventListener("opportunity:theme", () => chart?.resize());
   window.addEventListener("resize", () => {
     render(currentNodes);
