@@ -114,6 +114,11 @@
   }
 }
 
+a[href="#main-content"]:focus-visible {
+  outline: 3px solid var(--color-primary-600);
+  outline-offset: 3px;
+}
+
 .opportunity-app {
   --opp-bg: var(--color-opportunity-porcelain);
   --opp-surface: rgb(255 253 248 / 82%);

@@ -160,4 +160,28 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-experience", "constellation");
     await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
   });
+
+  test("exposes landmarks, visible keyboard focus, and the non-production boundary", async ({
+    page,
+  }) => {
+    await expect(page.getByRole("main")).toBeVisible();
+    await expect(
+      page.locator('[role="note"]', { hasText: "界面原型数据，不代表真实项目" }),
+    ).toBeVisible();
+    await page.keyboard.press("Tab");
+    const focused = page.locator(":focus");
+    await expect(focused).toBeVisible();
+    await expect(focused).toHaveCSS("outline-style", "solid");
+    await expect(page.getByText("证据评分，非平台担保").first()).toBeVisible();
+  });
+
+  test("loads without browser console errors", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") errors.push(message.text());
+    });
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    expect(errors).toEqual([]);
+  });
 });
