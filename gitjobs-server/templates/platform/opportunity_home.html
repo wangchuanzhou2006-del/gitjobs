@@ -1,16 +1,10 @@
 {% extends "base.html" %}
-{% block document_language %}
-  zh-CN
-{% endblock document_language %}
-{% block page_title %}
-  AI 餐饮机会星图
-{% endblock page_title %}
-{% block page_description %}
-  AI 驱动的餐饮项目发现与可信情报原型。
-{% endblock page_description %}
-{% block theme_color %}
-  #071426
-{% endblock theme_color %}
+{# djlint:off #}
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}AI 餐饮机会星图{% endblock page_title %}
+{% block page_description %}AI 驱动的餐饮项目发现与可信情报原型。{% endblock page_description %}
+{% block theme_color %}#071426{% endblock theme_color %}
+{# djlint:on #}
 {% block content %}
   <div id="opportunity-app" class="opportunity-app" data-theme="light">
     {% include "platform/components/exploration_rail.html" %}

@@ -62,5 +62,9 @@ mod tests {
         assert!(html.contains("data-opportunity-id=\"proto-gd-01\""));
         assert!(html.contains("id=\"opportunity-fallback\""));
         assert!(html.contains("aria-live=\"polite\""));
+        assert!(html.contains("<html lang=\"zh-CN\""));
+        assert!(html.contains("<title>AI 餐饮机会星图</title>"));
+        assert!(html.contains("content=\"AI 驱动的餐饮项目发现与可信情报原型。\""));
+        assert!(html.contains("content=\"#071426\""));
     }
 }
