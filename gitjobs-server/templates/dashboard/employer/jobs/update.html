@@ -289,9 +289,7 @@
 
         {# Salary -#}
         <div id="salary_kind_fixed"
-             class="col-span-full md:col-span-2
-                    {% if salary_kind != SalaryKind::Fixed %}
-                      hidden{%- endif -%}">
+             class="col-span-full md:col-span-2 {% if salary_kind != SalaryKind::Fixed %} hidden{%- endif -%}">
           <label for="salary" class="form-label">Amount</label>
           <div class="mt-2">
             <input id="salary"
@@ -303,9 +301,7 @@
           </div>
         </div>
         <div id="salary_kind_range"
-             class="grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-6 col-span-full md:col-span-2
-                    {% if salary_kind != SalaryKind::Range %}
-                      hidden {%- endif -%}">
+             class="grid grid-cols-1 gap-x-6 gap-y-8 md:grid-cols-6 col-span-full md:col-span-2 {% if salary_kind != SalaryKind::Range %} hidden {%- endif -%}">
           <div class="col-span-3">
             <label for="salary_min" class="form-label">Minimum</label>
             <div class="mt-2">

@@ -20,9 +20,15 @@
   </div>
   <script src="/static/vendor/js/echarts.v6.0.0.min.js"></script>
   <script type="module">
-    import { initializeExplorationRail } from "/static/js/platform/exploration-rail.js";
-    import { initializeAICommandBar } from "/static/js/platform/ai-command-bar.js";
-    import { initializeOpportunityGraph } from "/static/js/platform/opportunity-graph.js";
+    import {
+      initializeExplorationRail
+    } from "/static/js/platform/exploration-rail.js";
+    import {
+      initializeAICommandBar
+    } from "/static/js/platform/ai-command-bar.js";
+    import {
+      initializeOpportunityGraph
+    } from "/static/js/platform/opportunity-graph.js";
 
     const nodes = JSON.parse(document.getElementById("opportunity-data").textContent);
     initializeExplorationRail();

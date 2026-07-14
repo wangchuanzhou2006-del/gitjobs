@@ -61,8 +61,7 @@
                           hx-indicator="#dashboard-spinner"
                           hx-disabled-elt=".employer-button"
                           role="menuitem"
-                          class="employer-button cursor-pointer w-full flex items-center px-4 py-2 text-sm/6 hover:bg-stone-100
-                                 {% if is_selected -%}bg-stone-100{%- endif %}"
+                          class="employer-button cursor-pointer w-full flex items-center px-4 py-2 text-sm/6 hover:bg-stone-100 {% if is_selected -%}bg-stone-100{%- endif %}"
                           {% if is_selected %}disabled{% endif %}>
                     {{ employer::company_item(company = employer.company, logo_id = employer.logo_id) -}}
                   </button>

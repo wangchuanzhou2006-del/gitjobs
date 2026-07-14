@@ -169,9 +169,10 @@ test.describe("opportunity constellation foundation", () => {
       page.locator('[role="note"]', { hasText: "界面原型数据，不代表真实项目" }),
     ).toBeVisible();
     await page.keyboard.press("Tab");
-    const focused = page.locator(":focus");
-    await expect(focused).toBeVisible();
-    await expect(focused).toHaveCSS("outline-style", "solid");
+    const skipLink = page.locator('a[href="#main-content"]');
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeVisible();
+    await expect(skipLink).toHaveCSS("outline-style", "solid");
     await expect(page.getByText("证据评分，非平台担保").first()).toBeVisible();
   });
 

@@ -48,13 +48,8 @@
                       hx-delete="/dashboard/employer/team/members/{{ member.user_id }}/delete"
                       hx-disabled-elt="this"
                       hx-trigger="confirmed"
-                      class="btn-tertiary p-2
-                             {% if disabledButton -%}
-                               disabled opacity-50
-                             {% endif -%}"
-                      {% if disabledButton -%}
-                        title="When a team has only one member, it cannot be deleted." disabled
-                      {% endif -%}>
+                      class="btn-tertiary p-2 {% if disabledButton -%} disabled opacity-50 {% endif -%}"
+                      {% if disabledButton -%} title="When a team has only one member, it cannot be deleted." disabled {% endif -%}>
                 <div class="svg-icon size-4 icon-trash"></div>
               </button>
             </div>
