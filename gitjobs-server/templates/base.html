@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="en"
+<html lang="{% block document_language %}en{% endblock document_language %}"
       class="h-full min-h-dvh has-[div[role='dialog'][data-open='true']]:overflow-hidden">
   <head>
-    <title>GitJobs</title>
+    <title>{% block page_title %}GitJobs{% endblock page_title %}</title>
     <meta name="description"
-          content="GitJobs is an open source job board focused on open source job opportunities.">
+          content="{% block page_description %}GitJobs is an open source job board focused on open source job opportunities.{% endblock page_description %}">
+    <meta name="theme-color"
+          content="{% block theme_color %}#f9fafb{% endblock theme_color %}" />
     <meta name="keywords" content="community, organization, jobs, job">
 
     {#- OG tags #}
@@ -39,7 +41,6 @@
           href="https://gitjobs.dev/static/images/index/apple-touch-icon.png">
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f9fafb" />
     <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
 
     <link rel="stylesheet" href="/static/css/styles.css" />

@@ -22,6 +22,16 @@
   --color-primary-800: #9c1d10;
   --color-primary-900: #7e1b10;
   --color-primary-950: #440906;
+  --font-opportunity: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --color-opportunity-ink: #071426;
+  --color-opportunity-ink-soft: #10243d;
+  --color-opportunity-porcelain: #f7f3ea;
+  --color-opportunity-porcelain-deep: #ece5d8;
+  --color-opportunity-ai: #7357ff;
+  --color-opportunity-ai-bright: #9c8cff;
+  --color-opportunity-urgent: #ff7a3d;
+  --color-opportunity-trust: #1ab887;
+  --color-opportunity-line: #bdc8d5;
 }
 
 @layer components {
@@ -102,6 +112,57 @@
 
   .form-legend {
     @apply mt-1 text-xs/6 text-stone-600;
+  }
+}
+
+.opportunity-app {
+  --opp-bg: var(--color-opportunity-porcelain);
+  --opp-surface: rgb(255 253 248 / 82%);
+  --opp-text: var(--color-opportunity-ink);
+  --opp-muted: #526174;
+  --opp-border: rgb(7 20 38 / 14%);
+  min-height: 100dvh;
+  color: var(--opp-text);
+  background:
+    radial-gradient(circle at 72% 16%, rgb(115 87 255 / 12%), transparent 30rem),
+    linear-gradient(145deg, var(--opp-bg), #fffdf8 58%, #e8eee9);
+  font-family: var(--font-opportunity);
+}
+
+.opportunity-app[data-theme="dark"] {
+  --opp-bg: var(--color-opportunity-ink);
+  --opp-surface: rgb(16 36 61 / 72%);
+  --opp-text: #f7f3ea;
+  --opp-muted: #aebbd0;
+  --opp-border: rgb(247 243 234 / 16%);
+  background:
+    radial-gradient(circle at 70% 18%, rgb(115 87 255 / 22%), transparent 32rem),
+    linear-gradient(145deg, #06101e, #0b1a2d 55%, #071426);
+}
+
+.opportunity-surface {
+  border: 1px solid var(--opp-border);
+  background: var(--opp-surface);
+  box-shadow: 0 20px 55px rgb(7 20 38 / 10%);
+  backdrop-filter: blur(18px);
+}
+
+.opportunity-focus:focus-visible {
+  outline: 3px solid var(--color-opportunity-ai-bright);
+  outline-offset: 3px;
+}
+
+.opportunity-app [data-urgency="high"] { --node-accent: var(--color-opportunity-urgent); }
+.opportunity-app [data-credibility="high"] { --node-trust: var(--color-opportunity-trust); }
+
+@media (prefers-reduced-motion: reduce) {
+  .opportunity-app *,
+  .opportunity-app *::before,
+  .opportunity-app *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

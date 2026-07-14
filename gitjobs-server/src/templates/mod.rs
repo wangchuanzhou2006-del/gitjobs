@@ -38,6 +38,7 @@ pub(crate) enum PageId {
     LogIn,
     ModeratorDashboard,
     NotFound,
+    Opportunities,
     SignUp,
     Stats,
 }
