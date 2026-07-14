@@ -12,6 +12,7 @@ pub(crate) mod jobboard;
 pub(crate) mod misc;
 pub(crate) mod notifications;
 pub(crate) mod pagination;
+pub(crate) mod platform;
 
 /// Subset of the server configuration used in templates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

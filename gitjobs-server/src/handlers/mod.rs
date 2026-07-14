@@ -19,6 +19,8 @@ pub(crate) mod img;
 pub(crate) mod jobboard;
 /// Miscellaneous HTTP handlers.
 pub(crate) mod misc;
+/// Platform prototype HTTP handlers.
+pub(crate) mod platform;
 /// Shared test helpers for handlers modules.
 #[cfg(test)]
 pub(crate) mod tests;

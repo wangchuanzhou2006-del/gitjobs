@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}AI 餐饮机会星图{% endblock page_title %}
+{% block page_description %}AI 驱动的餐饮项目发现与可信情报原型。{% endblock page_description %}
+{% block theme_color %}#071426{% endblock theme_color %}
+{% block content %}
+  <div id="opportunity-app" class="opportunity-app" data-theme="light">
+    <p role="note">界面原型数据，不代表真实项目</p>
+    <section id="opportunity-fallback" aria-label="机会列表">
+      {% for node in nodes %}<article data-opportunity-id="{{ node.id }}">{{ node.title }} · {{ node.kind.label() }}</article>{% endfor %}
+    </section>
+    <p id="opportunity-status" aria-live="polite">当前展示 {{ nodes.len() }} 条原型机会</p>
+    <script id="opportunity-data" type="application/json">{{ nodes_json|safe }}</script>
+  </div>
+{% endblock content %}
