@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{# djlint:off #}
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}AI 餐饮机会星图{% endblock page_title %}
+{% block page_description %}AI 驱动的餐饮项目发现与可信情报原型。{% endblock page_description %}
+{% block theme_color %}#071426{% endblock theme_color %}
+{# djlint:on #}
+{% block content %}
+  <div id="opportunity-app" class="opportunity-app" data-theme="light">
+    {% include "platform/components/exploration_rail.html" %}
+    <main id="main-content" class="opportunity-main">
+      {% include "platform/components/ai_command_bar.html" %}
+      <p role="note">界面原型数据，不代表真实项目</p>
+      {% include "platform/components/opportunity_graph.html" %}
+      {% include "platform/components/opportunity_fallback.html" %}
+      {# djlint:off #}
+      <script id="opportunity-data" type="application/json">{{ nodes_json|safe }}</script>
+      {# djlint:on #}
+    </main>
+  </div>
+  <script type="module">
+    import {
+      initializeExplorationRail
+    } from "/static/js/platform/exploration-rail.js";
+    import {
+      initializeAICommandBar
+    } from "/static/js/platform/ai-command-bar.js";
+    import {
+      initializeOpportunityGraph
+    } from "/static/js/platform/opportunity-graph.js";
+
+    const nodes = JSON.parse(document.getElementById("opportunity-data").textContent);
+    initializeExplorationRail();
+    initializeOpportunityGraph(nodes);
+    initializeAICommandBar(nodes);
+  </script>
+{% endblock content %}

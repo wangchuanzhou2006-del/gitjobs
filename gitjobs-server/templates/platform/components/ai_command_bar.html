@@ -1,0 +1,27 @@
+<section class="opportunity-command opportunity-surface"
+         aria-labelledby="opportunity-command-title">
+  <div>
+    <p class="opportunity-eyebrow">AI 机会指令</p>
+    <h1 id="opportunity-command-title">把你的承接能力，变成可探索的机会</h1>
+    <p>本阶段在浏览器内演示条件提取，不会上传文本或调用 AI。</p>
+  </div>
+  <form id="opportunity-command-form">
+    <label for="ai-command-input">描述你要寻找的餐饮项目</label>
+    <div class="opportunity-command-row">
+      <input id="ai-command-input"
+             class="opportunity-focus"
+             type="text"
+             autocomplete="off"
+             placeholder="例如：广东，高校食堂，1万人以上，我有300万资金和8年经验">
+      <button class="opportunity-focus" type="submit">生成机会视图</button>
+    </div>
+  </form>
+  <div class="opportunity-condition-row">
+    <div id="opportunity-condition-chips" aria-label="已识别条件"></div>
+    <button id="opportunity-undo"
+            class="opportunity-focus"
+            type="button"
+            aria-label="撤销上一步条件修改"
+            disabled>撤销</button>
+  </div>
+</section>

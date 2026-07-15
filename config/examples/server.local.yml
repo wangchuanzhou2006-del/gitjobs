@@ -1,0 +1,25 @@
+db:
+  url: postgres://gitjobs:gitjobs-dev-password@127.0.0.1:5432/gitjobs
+email:
+  from_address: test@example.com
+  from_name: GitJobs Local
+  smtp:
+    host: 127.0.0.1
+    port: 2525
+    username: test
+    password: local-only
+  rcpts_whitelist:
+    - test@example.com
+log:
+  format: pretty
+server:
+  addr: 0.0.0.0:8080
+  base_url: http://127.0.0.1:8080
+  cookie:
+    secure: false
+  login:
+    email: true
+    github: false
+    linuxfoundation: false
+  oauth2: {}
+  oidc: {}

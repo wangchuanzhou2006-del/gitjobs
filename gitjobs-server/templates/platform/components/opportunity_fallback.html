@@ -1,0 +1,47 @@
+<section id="opportunity-fallback"
+         class="opportunity-fallback"
+         aria-labelledby="opportunity-list-title">
+  <div class="opportunity-list-heading">
+    <div>
+      <p class="opportunity-eyebrow">同步机会流</p>
+      <h2 id="opportunity-list-title">所有星点都有可读取的项目卡片</h2>
+    </div>
+    <p id="opportunity-status" aria-live="polite">当前展示 {{ nodes.len() }} 条原型机会</p>
+  </div>
+  <div class="opportunity-card-grid">
+    {% for node in nodes %}
+      <article class="opportunity-card opportunity-surface"
+               data-opportunity-card
+               data-opportunity-id="{{ node.id }}"
+               data-credibility="{% if node.credibility >= 85 %}high{% else %}standard{% endif %}"
+               data-urgency="{% if node.days_left <= 5 %}high{% else %}standard{% endif %}">
+        <div>
+          <span>{{ node.kind.label() }}</span>
+          <span>{{ node.region }} · {{ node.city }}</span>
+        </div>
+        <h3>{{ node.title }}</h3>
+        <dl>
+          <div>
+            <dt>服务规模</dt>
+            <dd>
+              {{ node.headcount }} 人
+            </dd>
+          </div>
+          <div>
+            <dt>可信度</dt>
+            <dd>
+              {{ node.credibility }} / 100（证据评分，非平台担保）
+            </dd>
+          </div>
+          <div>
+            <dt>截止</dt>
+            <dd>
+              {{ node.days_left }} 天后
+            </dd>
+          </div>
+        </dl>
+        <p>来源：{{ node.source_label }}</p>
+      </article>
+    {% endfor %}
+  </div>
+</section>

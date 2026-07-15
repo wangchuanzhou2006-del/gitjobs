@@ -36,6 +36,7 @@ use crate::{
         auth::{self, LOG_IN_URL},
         dashboard, img, jobboard,
         misc::{not_found, search_locations, search_members, search_projects, user_menu_section},
+        platform,
     },
     img::DynImageStore,
     notifications::DynNotificationsManager,
@@ -123,6 +124,7 @@ pub(crate) async fn setup(
         ))
         // Public routes
         .route("/", get(jobboard::jobs::jobs_page))
+        .route("/opportunities", get(platform::opportunities::page))
         .route("/about", get(jobboard::about::page))
         .route("/embed", get(jobboard::embed::jobs_page))
         .route("/embed/job/{job_id}/card.svg", get(jobboard::embed::job_card))

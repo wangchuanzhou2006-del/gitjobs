@@ -9,3 +9,7 @@ node_modules
 package-lock.json
 package.json
 test-results
+.worktrees/
+config/local/
+playwright-report/
+blob-report/
