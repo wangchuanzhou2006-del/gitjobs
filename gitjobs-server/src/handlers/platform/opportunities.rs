@@ -66,5 +66,8 @@ mod tests {
         assert!(html.contains("<title>AI 餐饮机会星图</title>"));
         assert!(html.contains("content=\"AI 驱动的餐饮项目发现与可信情报原型。\""));
         assert!(html.contains("content=\"#071426\""));
+        assert_eq!(html.matches("href=\"/talent\"").count(), 2);
+        assert_eq!(html.matches("aria-current=\"page\">机会</a>").count(), 2);
+        assert_eq!(html.matches("aria-current=\"page\">人才</a>").count(), 0);
     }
 }

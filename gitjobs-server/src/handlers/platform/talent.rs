@@ -82,5 +82,8 @@ mod tests {
         assert!(html.contains("aria-live=\"polite\""));
         assert!(html.contains("<html lang=\"zh-CN\""));
         assert!(html.contains("<title>AI 餐饮人才匹配工作台</title>"));
+        assert_eq!(html.matches("href=\"/talent\"").count(), 2);
+        assert_eq!(html.matches("aria-current=\"page\">人才</a>").count(), 2);
+        assert_eq!(html.matches("aria-current=\"page\">机会</a>").count(), 0);
     }
 }
