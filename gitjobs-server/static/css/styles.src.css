@@ -125,6 +125,8 @@ a[href="#main-content"]:focus-visible {
   --opp-text: var(--color-opportunity-ink);
   --opp-muted: #526174;
   --opp-border: rgb(7 20 38 / 14%);
+  --opp-interactive: #5b3fd6;
+  --opp-focus: #5b3fd6;
   min-height: 100dvh;
   color: var(--opp-text);
   background:
@@ -139,6 +141,8 @@ a[href="#main-content"]:focus-visible {
   --opp-text: #f7f3ea;
   --opp-muted: #aebbd0;
   --opp-border: rgb(247 243 234 / 16%);
+  --opp-interactive: var(--color-opportunity-ai);
+  --opp-focus: var(--color-opportunity-ai-bright);
   background:
     radial-gradient(circle at 70% 18%, rgb(115 87 255 / 22%), transparent 32rem),
     linear-gradient(145deg, #06101e, #0b1a2d 55%, #071426);
@@ -152,7 +156,7 @@ a[href="#main-content"]:focus-visible {
 }
 
 .opportunity-focus:focus-visible {
-  outline: 3px solid var(--color-opportunity-ai-bright);
+  outline: 3px solid var(--opp-focus);
   outline-offset: 3px;
 }
 
@@ -948,7 +952,7 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
   text-align: center;
 }
 .opportunity-rail [aria-current="page"] {
-  color: var(--color-opportunity-ai);
+  color: var(--opp-interactive);
   font-weight: 750;
 }
 .opportunity-rail [aria-disabled="true"] {
@@ -982,7 +986,7 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
     text-align: center;
   }
   .opportunity-mobile-nav [aria-current="page"] {
-    color: var(--color-opportunity-ai);
+    color: var(--opp-interactive);
     font-weight: 750;
   }
   .opportunity-mobile-nav [aria-disabled="true"] {
@@ -998,7 +1002,7 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
   padding: clamp(1.2rem, 3vw, 2.4rem);
 }
 .opportunity-eyebrow {
-  color: var(--color-opportunity-ai);
+  color: var(--opp-interactive);
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.18em;
@@ -1038,7 +1042,7 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
   border-radius: 1rem;
   padding: 0.9rem 1.15rem;
   color: white;
-  background: var(--color-opportunity-ai);
+  background: var(--opp-interactive);
   font-weight: 750;
 }
 .opportunity-condition-row {

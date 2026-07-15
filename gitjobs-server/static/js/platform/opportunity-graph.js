@@ -7,13 +7,27 @@ const TYPE_COLORS = {
 };
 
 const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const ECHARTS_SOURCE = "/static/vendor/js/echarts.v6.0.0.min.js";
+let echartsPromise;
 
 export const shouldUseFallback = () =>
   window.innerWidth < 768 ||
   reducedMotionQuery.matches ||
   navigator.connection?.saveData === true ||
-  (typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4) ||
-  !window.echarts;
+  (typeof navigator.deviceMemory === "number" && navigator.deviceMemory <= 4);
+
+const loadECharts = () => {
+  if (window.echarts) return Promise.resolve(window.echarts);
+  echartsPromise ||= new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = ECHARTS_SOURCE;
+    script.async = true;
+    script.addEventListener("load", () => resolve(window.echarts ?? null), { once: true });
+    script.addEventListener("error", () => resolve(null), { once: true });
+    document.head.append(script);
+  });
+  return echartsPromise;
+};
 
 const POSITIONS = [
   [16, 64],
@@ -47,8 +61,10 @@ export const initializeOpportunityGraph = (initialNodes) => {
   if (!app || !host || !status) return;
   let chart;
   let currentNodes = initialNodes;
+  let renderVersion = 0;
 
-  const render = (nodes) => {
+  const render = async (nodes) => {
+    const version = ++renderVersion;
     currentNodes = nodes;
     const visibleIds = new Set(nodes.map(({ id }) => id));
     cards.forEach((card) => {
@@ -58,14 +74,22 @@ export const initializeOpportunityGraph = (initialNodes) => {
       nodes.length === 0
         ? "没有符合条件的原型机会，请减少一个条件后重试"
         : `当前展示 ${nodes.length} 条原型机会`;
-    const fallback = shouldUseFallback();
-    app.dataset.experience = fallback ? "fallback" : "constellation";
-    if (fallback) {
+    if (shouldUseFallback()) {
+      app.dataset.experience = "fallback";
       chart?.dispose();
       chart = undefined;
       return;
     }
-    chart ||= window.echarts.init(host, null, { renderer: "canvas" });
+    app.dataset.experience = "fallback";
+    const echarts = await loadECharts();
+    if (version !== renderVersion || shouldUseFallback()) return;
+    if (!echarts) {
+      chart?.dispose();
+      chart = undefined;
+      return;
+    }
+    app.dataset.experience = "constellation";
+    chart ||= echarts.init(host, null, { renderer: "canvas" });
     const data = nodes.map(chartNode);
     chart.setOption(
       {
@@ -97,12 +121,12 @@ export const initializeOpportunityGraph = (initialNodes) => {
     );
   };
 
-  render(initialNodes);
-  window.addEventListener("opportunity:filters-changed", ({ detail }) => render(detail.nodes));
-  reducedMotionQuery.addEventListener("change", () => render(currentNodes));
+  void render(initialNodes);
+  window.addEventListener("opportunity:filters-changed", ({ detail }) => void render(detail.nodes));
+  reducedMotionQuery.addEventListener("change", () => void render(currentNodes));
   window.addEventListener("opportunity:theme", () => chart?.resize());
   window.addEventListener("resize", () => {
-    render(currentNodes);
+    void render(currentNodes);
     chart?.resize();
   });
 };
