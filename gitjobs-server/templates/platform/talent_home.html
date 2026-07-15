@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{# djlint:off #}
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}AI 餐饮人才匹配工作台{% endblock page_title %}
+{% block page_description %}AI 驱动的餐饮人才匹配界面原型。{% endblock page_description %}
+{% block theme_color %}#071426{% endblock theme_color %}
+{# djlint:on #}
+{% block content %}
+  <div id="talent-app" class="talent-app">
+    {% include "platform/components/exploration_rail.html" %}
+    <main id="main-content" class="talent-main">
+      {% include "platform/components/talent_command_bar.html" %}
+      <p role="note">界面原型数据，不代表真实招聘或求职信息</p>
+      {% include "platform/components/talent_results.html" %}
+      {% include "platform/components/talent_detail_drawer.html" %}
+      {# djlint:off #}
+      <script id="talent-data" type="application/json">{{ records_json|safe }}</script>
+      {# djlint:on #}
+    </main>
+  </div>
+{% endblock content %}
