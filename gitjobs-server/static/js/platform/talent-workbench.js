@@ -17,9 +17,10 @@ export const initializeTalentWorkbench = (data) => {
   const cardById = new Map(cards.map((card) => [card.dataset.talentId, card]));
   const state = { mode: "hiring", conditions: [], history: [], selectedId: null };
   let matches = new Map();
-  const remember = () => state.history.push(state.conditions.map((item) => ({ ...item })));
+  const cloneConditions = () => state.conditions.map((item) => ({ ...item }));
+  const remember = () => state.history.push({ mode: state.mode, conditions: cloneConditions() });
 
-  const render = ({ applyConditions = true } = {}) => {
+  const render = () => {
     for (const button of modeButtons)
       button.setAttribute("aria-pressed", String(button.dataset.talentModeButton === state.mode));
     chips.replaceChildren(
@@ -38,7 +39,7 @@ export const initializeTalentWorkbench = (data) => {
     );
     undo.disabled = state.history.length === 0;
 
-    const ranked = filterAndRankTalent(data[state.mode], applyConditions ? state.conditions : []);
+    const ranked = filterAndRankTalent(data[state.mode], state.conditions);
     matches = new Map(ranked.map(({ record, match }) => [record.id, match]));
     const visible = new Set(matches.keys());
     for (const { record, match } of ranked) {
@@ -66,7 +67,7 @@ export const initializeTalentWorkbench = (data) => {
     for (const card of cards.filter((card) => card.dataset.talentMode !== state.mode)) host.append(card);
     for (const card of cards)
       card.hidden = card.dataset.talentMode !== state.mode || !visible.has(card.dataset.talentId);
-    if (!state.conditions.length || !applyConditions)
+    if (!state.conditions.length)
       status.textContent =
         "当前展示 " + ranked.length + " 条" + (state.mode === "hiring" ? "招聘机会" : "求职人才");
     else status.textContent = ranked.length ? ranked.length + " 条匹配结果" : "没有匹配结果";
@@ -85,7 +86,9 @@ export const initializeTalentWorkbench = (data) => {
   });
   undo.addEventListener("click", () => {
     if (!state.history.length) return;
-    state.conditions = state.history.pop();
+    const previous = state.history.pop();
+    state.mode = previous.mode;
+    state.conditions = previous.conditions;
     render();
   });
   for (const button of modeButtons)
@@ -94,7 +97,7 @@ export const initializeTalentWorkbench = (data) => {
       remember();
       state.mode = button.dataset.talentModeButton;
       state.conditions = state.conditions.filter((condition) => COMMON_KEYS.has(condition.key));
-      render({ applyConditions: false });
+      render();
     });
   for (const button of document.querySelectorAll("[data-open-talent-detail]"))
     button.addEventListener("click", () => {

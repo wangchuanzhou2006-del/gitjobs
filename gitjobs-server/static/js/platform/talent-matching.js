@@ -1,16 +1,26 @@
 const REGION_PATTERN = /(北京|天津|河北|广东|江苏|浙江|四川|安徽)/;
 const ROLE_PATTERN = /(炒锅|切配|打荷|洗碗|面点|烧烤|服务员|店长)/;
 const SKILL_PATTERN = /(川湘菜|家常菜|清真|火锅|早餐|面食|刀工)/g;
-const WEIGHTS = {
-  region: 15,
+export const TALENT_DIMENSION_WEIGHTS = Object.freeze({
   role: 20,
-  skills: 15,
+  region: 20,
   salaryMin: 20,
+  skills: 15,
   experienceYears: 10,
-  restDays: 5,
   lodging: 5,
-  availability: 5,
-  urgency: 5,
+  restDays: 5,
+  timing: 5,
+});
+const CONDITION_DIMENSIONS = {
+  role: "role",
+  region: "region",
+  salaryMin: "salaryMin",
+  skills: "skills",
+  experienceYears: "experienceYears",
+  lodging: "lodging",
+  restDays: "restDays",
+  availability: "timing",
+  urgency: "timing",
 };
 
 const includesRole = (record, role) =>
@@ -98,15 +108,23 @@ export const scoreTalentRecord = (record, conditions) => {
   let hitWeight = 0;
   const reasons = [];
   const misses = [];
+  const resultsByDimension = new Map();
   for (const condition of conditions) {
     const result = evaluate(record, condition);
-    const weight = WEIGHTS[condition.key];
-    if (!result || !weight) continue;
+    const dimension = CONDITION_DIMENSIONS[condition.key];
+    if (!result || !dimension) continue;
+    const dimensionResults = resultsByDimension.get(dimension) || [];
+    dimensionResults.push(result);
+    resultsByDimension.set(dimension, dimensionResults);
+  }
+  for (const [dimension, results] of resultsByDimension) {
+    const weight = TALENT_DIMENSION_WEIGHTS[dimension];
     activeWeight += weight;
-    if (result[0]) {
-      hitWeight += weight;
-      reasons.push(result[1]);
-    } else misses.push(result[2]);
+    if (results.every(([hit]) => hit)) hitWeight += weight;
+    for (const [hit, reason, miss] of results) {
+      if (hit) reasons.push(reason);
+      else misses.push(miss);
+    }
   }
   return {
     score: activeWeight ? Math.round((hitWeight / activeWeight) * 100) : null,

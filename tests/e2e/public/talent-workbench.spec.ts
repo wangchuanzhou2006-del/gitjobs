@@ -30,10 +30,14 @@ test.describe("餐饮人才工作台", () => {
     await page.getByRole("button", { name: "求职人才" }).click();
     await expect(
       page.locator('[data-talent-card][data-talent-mode="seeking"]:visible'),
-    ).toHaveCount(8);
+    ).toHaveCount(0);
     await expect(page.locator("#talent-condition-chips")).toContainText("北京");
     await expect(page.locator("#talent-condition-chips")).toContainText("切配");
     await expect(page.locator("#talent-condition-chips button")).toHaveCount(3);
+    await expect(page.locator("#talent-status")).toHaveText("没有匹配结果");
+    await expect(page.locator("[data-talent-match-score]:visible")).toHaveCount(
+      0,
+    );
   });
 
   test("支持移除条件、撤销和 Enter 提交", async ({ page }) => {
@@ -65,24 +69,52 @@ test.describe("餐饮人才工作台", () => {
     );
   });
 
-  test("切换模式只保留两端通用条件", async ({ page }) => {
+  test("切换模式应用公共条件且撤销恢复原模式完整条件", async ({ page }) => {
     await page
       .getByLabel("描述招聘或求职需求")
       .fill(
-        "北京找切配，工资7000以上，川湘菜，3年经验，包吃住，月休4天，随时上岗，急招",
+        "天津找切配，工资5000以上，3年经验，包吃住，月休4天，随时上岗，急招",
       );
     await page.getByRole("button", { name: "生成匹配" }).click();
-    await expect(page.locator("#talent-condition-chips button")).toHaveCount(9);
+    await expect(page.locator("#talent-condition-chips button")).toHaveCount(8);
+    await page.evaluate(() => {
+      window.__talentSelection = null;
+      window.addEventListener("talent:selection", (event) => {
+        window.__talentSelection = event.detail;
+      });
+    });
 
     await page.getByRole("button", { name: "求职人才" }).click();
     const chips = page.locator("#talent-condition-chips");
-    await expect(chips.locator("button")).toHaveCount(4);
-    await expect(chips).toContainText("北京");
+    await expect(chips.locator("button")).toHaveCount(3);
+    await expect(chips).toContainText("天津");
     await expect(chips).toContainText("切配");
-    await expect(chips).toContainText("7000");
-    await expect(chips).toContainText("川湘菜");
+    await expect(chips).toContainText("5000");
     await expect(chips).not.toContainText("3年经验");
     await expect(chips).not.toContainText("包吃住");
+    await expect(page.locator("#talent-status")).toHaveText("1 条匹配结果");
+    await expect(page.locator("[data-talent-card]:visible")).toHaveCount(1);
+    await expect(page.locator("[data-talent-match-score]:visible")).toHaveText(
+      "匹配度 100%",
+    );
+    await page.locator("[data-open-talent-detail]:visible").click();
+    const switchedSelection = await page.evaluate(
+      () => window.__talentSelection,
+    );
+    expect(switchedSelection.record.id).toBe("proto-seek-02");
+    expect(switchedSelection.match.score).toBe(100);
+
+    await page.getByRole("button", { name: "撤销条件更改" }).click();
+    await expect(
+      page.getByRole("button", { name: "招聘机会" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(chips.locator("button")).toHaveCount(8);
+    await expect(chips).toContainText("3年经验");
+    await expect(chips).toContainText("包吃住");
+    await expect(page.locator("#talent-status")).toContainText("条匹配结果");
+    await expect(
+      page.locator("[data-talent-match-score]:visible").first(),
+    ).toContainText("匹配度");
   });
 
   test("纯函数按活跃维度评分、硬冲突筛选并稳定排序", async ({ page }) => {
@@ -145,6 +177,22 @@ test.describe("餐饮人才工作台", () => {
       const singleScore = matching.scoreTalentRecord(exact, [
         { key: "region", value: "北京", label: "北京" },
       ]);
+      const roleRegionScore = matching.scoreTalentRecord(exact, [
+        { key: "role", value: "切配", label: "切配" },
+        { key: "region", value: "天津", label: "天津" },
+      ]);
+      const timingMissScore = matching.scoreTalentRecord(
+        {
+          ...exact,
+          availability: "两周后到岗（原型）",
+          urgency: "常规（原型）",
+        },
+        conditions,
+      );
+      const timingMixedScore = matching.scoreTalentRecord(
+        { ...exact, urgency: "常规（原型）" },
+        conditions,
+      );
       const ranked = matching.filterAndRankTalent(
         [preferredMiss, hardMiss, exact],
         conditions,
@@ -153,6 +201,12 @@ test.describe("餐饮人才工作台", () => {
         conditionKeys: conditions.map((condition) => condition.key),
         emptyScore,
         singleScore,
+        roleRegionScore,
+        timingMissScore,
+        timingMixedScore,
+        dimensionWeightTotal: Object.values(
+          matching.TALENT_DIMENSION_WEIGHTS || {},
+        ).reduce((total, weight) => total + weight, 0),
         ranked: ranked.map(({ record, match }) => ({
           id: record.id,
           score: match.score,
@@ -181,6 +235,16 @@ test.describe("餐饮人才工作台", () => {
     });
     expect(result.singleScore.score).toBe(100);
     expect(result.singleScore.reasons).toContain("地区符合：北京");
+    expect(result.roleRegionScore.score).toBe(50);
+    expect(result.dimensionWeightTotal).toBe(100);
+    expect(result.timingMissScore.score).toBe(95);
+    expect(result.timingMixedScore.score).toBe(95);
+    expect(result.timingMixedScore.reasons).toContain(
+      "到岗时间符合：可随时到岗",
+    );
+    expect(result.timingMixedScore.misses).toContain(
+      "紧急度未满足：当前常规（原型）",
+    );
     expect(result.ranked.map(({ id }) => id)).toEqual([
       "exact",
       "preferred-miss",
