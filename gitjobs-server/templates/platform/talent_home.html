@@ -6,9 +6,9 @@
 {% block theme_color %}#071426{% endblock theme_color %}
 {# djlint:on #}
 {% block content %}
-  <div id="talent-app" class="talent-app">
+  <div id="talent-app" class="talent-app opportunity-app">
     {% include "platform/components/exploration_rail.html" %}
-    <main id="main-content" class="talent-main">
+    <main id="main-content" class="talent-main opportunity-main">
       {% include "platform/components/talent_command_bar.html" %}
       <p role="note">界面原型数据，不代表真实招聘或求职信息</p>
       {% include "platform/components/talent_results.html" %}
@@ -18,4 +18,12 @@
       {# djlint:on #}
     </main>
   </div>
+  <script type="module">
+    import {
+      initializeTalentWorkbench
+    } from "/static/js/platform/talent-workbench.js";
+
+    const data = JSON.parse(document.getElementById("talent-data").textContent);
+    initializeTalentWorkbench(data);
+  </script>
 {% endblock content %}

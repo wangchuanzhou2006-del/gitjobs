@@ -2,7 +2,7 @@
   <header>
     <p>服务端可读取结果</p>
     <h2 id="talent-results-title">原型人才与岗位</h2>
-    <p id="talent-results-status" aria-live="polite">当前展示 8 条招聘原型记录</p>
+    <p id="talent-status" aria-live="polite">当前展示 8 条招聘机会</p>
   </header>
   <div class="talent-card-grid">
     {% for record in hiring_records %}
@@ -26,8 +26,9 @@
           <div><dt>来源</dt><dd>{{ record.source_label }}</dd></div>
           <div><dt>更新</dt><dd>{{ record.updated_label }}</dd></div>
         </dl>
-        <ul aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
-        <p>等待输入条件</p>
+        <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
+        <p data-talent-match-score>等待输入条件</p>
+        <ul data-talent-match-reasons aria-label="推荐原因"></ul>
         <button type="button" data-open-talent-detail data-talent-id="{{ record.id }}">查看详情</button>
       </article>
     {% endfor %}
@@ -53,8 +54,9 @@
           <div><dt>来源</dt><dd>{{ record.source_label }}</dd></div>
           <div><dt>更新</dt><dd>{{ record.updated_label }}</dd></div>
         </dl>
-        <ul aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
-        <p>等待输入条件</p>
+        <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
+        <p data-talent-match-score>等待输入条件</p>
+        <ul data-talent-match-reasons aria-label="推荐原因"></ul>
         <button type="button" data-open-talent-detail data-talent-id="{{ record.id }}">查看详情</button>
       </article>
     {% endfor %}

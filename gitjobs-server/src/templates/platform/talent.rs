@@ -56,11 +56,11 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
     let fixtures = [
         (
             "proto-hire-01",
-            "炒锅岗位（原型）",
+            "切配岗位（原型）",
             "连锁餐饮门店（原型）",
             "北京",
             "朝阳区",
-            "炒锅",
+            "切配",
         ),
         (
             "proto-hire-02",
@@ -132,7 +132,7 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
                 region,
                 district,
                 salary_min: 4_800 + index as u32 * 400,
-                salary_max: 6_800 + index as u32 * 500,
+                salary_max: 7_000 + index as u32 * 500,
                 skills: vec![skill, "餐饮门店协作（原型）"],
                 experience_years: (index % 5 + 1) as u8,
                 hours_per_day: 8,
@@ -309,6 +309,19 @@ mod tests {
             let json = serde_json::to_string(&record).unwrap();
             assert!(!long_digit_run.is_match(&json), "contact-like digits in {json}");
         }
+    }
+
+    #[test]
+    fn hiring_examples_cover_beijing_cutting_match_command() {
+        let record = prototype_hiring_records().into_iter().find(|record| {
+            record.region == "北京"
+                && record.title.contains("切配")
+                && record.salary_max >= 7_000
+                && record.rest_days >= 4
+                && record.lodging.starts_with("提供")
+        });
+
+        assert!(record.is_some(), "北京切配示例指令应至少有一条硬条件匹配记录");
     }
 
     #[derive(Serialize)]
