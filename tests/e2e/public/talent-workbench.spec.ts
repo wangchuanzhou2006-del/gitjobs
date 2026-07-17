@@ -1,10 +1,124 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 import { navigateWithRetries } from "../shared/helpers";
 
+const browserErrors = new WeakMap<Page, string[]>();
+
+const captureBrowserErrors = (page: Page): string[] => {
+  const errors: string[] = [];
+  browserErrors.set(page, errors);
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`console.error: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  return errors;
+};
+
 test.describe("餐饮人才工作台", () => {
   test.beforeEach(async ({ page }) => {
+    captureBrowserErrors(page);
     await navigateWithRetries(page, "/talent", "talent workbench");
+  });
+
+  test.afterEach(async ({ page }) => {
+    expect(browserErrors.get(page) ?? []).toEqual([]);
+  });
+
+  test("禁用 JavaScript 时招聘与求职各有 8 条服务端结果可读", async ({ browser }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    await navigateWithRetries(page, "/talent", "talent workbench without JavaScript");
+
+    await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]:visible')).toHaveCount(8);
+    await expect(page.locator('[data-talent-card][data-talent-mode="seeking"]:visible')).toHaveCount(8);
+    await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
+    await context.close();
+  });
+
+  test("交互数据损坏时播报降级状态并保留全部服务端结果", async ({ page }) => {
+    await page.route("**/talent", async (route) => {
+      const response = await route.fetch();
+      const html = await response.text();
+      await route.fulfill({
+        response,
+        body: html.replace(
+          /(<script id="talent-data" type="application\/json">)[\s\S]*?(<\/script>)/,
+          "$1{invalid json$2",
+        ),
+      });
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    await expect(page.locator("#talent-status")).toHaveText("交互数据暂不可用");
+    await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]:visible')).toHaveCount(8);
+    await expect(page.locator('[data-talent-card][data-talent-mode="seeking"]:visible')).toHaveCount(8);
+    await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
+  });
+
+  test("交互数据节点缺失时保留全部服务端结果", async ({ page }) => {
+    await page.route("**/talent", async (route) => {
+      const response = await route.fetch();
+      const html = await response.text();
+      await route.fulfill({
+        response,
+        body: html.replace(/<script id="talent-data" type="application\/json">[\s\S]*?<\/script>/, ""),
+      });
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    await expect(page.locator("#talent-status")).toHaveText("交互数据暂不可用");
+    await expect(page.locator("[data-talent-card]:visible")).toHaveCount(16);
+    await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
+  });
+
+  test("交互数据形状错误时保留全部服务端结果", async ({ page }) => {
+    await page.route("**/talent", async (route) => {
+      const response = await route.fetch();
+      const html = await response.text();
+      await route.fulfill({
+        response,
+        body: html.replace(
+          /(<script id="talent-data" type="application\/json">)[\s\S]*?(<\/script>)/,
+          '$1{"hiring":{},"seeking":[]}$2',
+        ),
+      });
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    await expect(page.locator("#talent-status")).toHaveText("交互数据暂不可用");
+    await expect(page.locator("[data-talent-card]:visible")).toHaveCount(16);
+    await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
+  });
+  test("Storage 读写被拒绝时主题和工作台仍完成初始化", async ({ browser }) => {
+    const context = await browser.newContext({ colorScheme: "dark" });
+    await context.addInitScript(() => {
+      for (const method of ["getItem", "setItem"] as const) {
+        Object.defineProperty(Storage.prototype, method, {
+          configurable: true,
+          value: () => {
+            throw new DOMException("Storage access denied", "SecurityError");
+          },
+        });
+      }
+      window.__talentThemeEvents = [];
+      window.addEventListener("talent:theme", (event) => {
+        window.__talentThemeEvents.push(event.detail);
+      });
+    });
+    const page = await context.newPage();
+    const errors = captureBrowserErrors(page);
+    await navigateWithRetries(page, "/talent", "talent workbench without Storage");
+
+    await expect(page.locator("#talent-app")).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]:visible')).toHaveCount(8);
+    const toggle = page.locator("#opportunity-theme-toggle");
+    await toggle.click();
+    await expect(page.locator("#talent-app")).toHaveAttribute("data-theme", "light");
+    await expect(toggle).toHaveAttribute("aria-label", "切换深色沉浸模式");
+    expect(await page.evaluate(() => window.__talentThemeEvents)).toEqual(["light"]);
+    expect(errors).toEqual([]);
+    await context.close();
   });
 
   test("默认展示招聘机会并根据自然语言生成可解释匹配", async ({ page }) => {
@@ -58,9 +172,9 @@ test.describe("餐饮人才工作台", () => {
   test("切换模式应用公共条件且撤销恢复原模式完整条件", async ({ page }) => {
     await page
       .getByLabel("描述招聘或求职需求")
-      .fill("天津找切配，工资5000以上，3年经验，包吃住，月休4天，随时上岗，急招");
+      .fill("天津找切配和川湘菜，工资5000以上，3年经验，包吃住，月休4天，随时上岗，急招");
     await page.getByRole("button", { name: "生成匹配" }).click();
-    await expect(page.locator("#talent-condition-chips button")).toHaveCount(8);
+    await expect(page.locator("#talent-condition-chips button")).toHaveCount(9);
     await page.evaluate(() => {
       window.__talentSelection = null;
       window.addEventListener("talent:selection", (event) => {
@@ -70,24 +184,25 @@ test.describe("餐饮人才工作台", () => {
 
     await page.getByRole("button", { name: "求职人才" }).click();
     const chips = page.locator("#talent-condition-chips");
-    await expect(chips.locator("button")).toHaveCount(3);
+    await expect(chips.locator("button")).toHaveCount(4);
     await expect(chips).toContainText("天津");
     await expect(chips).toContainText("切配");
     await expect(chips).toContainText("5000");
+    await expect(chips).toContainText("川湘菜");
     await expect(chips).not.toContainText("3年经验");
     await expect(chips).not.toContainText("包吃住");
     await expect(page.locator("#talent-status")).toHaveText("1 条匹配结果");
     await expect(page.locator("[data-talent-card]:visible")).toHaveCount(1);
-    await expect(page.locator("[data-talent-match-score]:visible")).toHaveText("匹配度 100%");
+    await expect(page.locator("[data-talent-match-score]:visible")).toHaveText("匹配度 80%");
     await page.locator("[data-open-talent-detail]:visible").click();
     const switchedSelection = await page.evaluate(() => window.__talentSelection);
     expect(switchedSelection.record.id).toBe("proto-seek-02");
-    expect(switchedSelection.match.score).toBe(100);
+    expect(switchedSelection.match.score).toBe(80);
     await page.getByRole("button", { name: "关闭人才详情" }).click();
 
     await page.getByRole("button", { name: "撤销条件更改" }).click();
     await expect(page.getByRole("button", { name: "招聘机会" })).toHaveAttribute("aria-pressed", "true");
-    await expect(chips.locator("button")).toHaveCount(8);
+    await expect(chips.locator("button")).toHaveCount(9);
     await expect(chips).toContainText("3年经验");
     await expect(chips).toContainText("包吃住");
     await expect(page.locator("#talent-status")).toContainText("条匹配结果");
@@ -131,6 +246,8 @@ test.describe("餐饮人才工作台", () => {
         prototype: true,
       };
       const exact = { ...base, id: "exact", credibility: 80 };
+      const sameScoreHighA = { ...base, id: "same-score-high-a", credibility: 95 };
+      const sameScoreHighB = { ...base, id: "same-score-high-b", credibility: 95 };
       const preferredMiss = {
         ...base,
         id: "preferred-miss",
@@ -161,7 +278,23 @@ test.describe("餐饮人才工作台", () => {
         conditions,
       );
       const timingMixedScore = matching.scoreTalentRecord({ ...exact, urgency: "常规（原型）" }, conditions);
-      const ranked = matching.filterAndRankTalent([preferredMiss, hardMiss, exact], conditions);
+      const nativeSort = Array.prototype.sort;
+      Array.prototype.sort = function (compare) {
+        return nativeSort.call(this, (left, right) => {
+          const result = compare(left, right);
+          if (result !== 0) return result;
+          return String(right?.record?.id ?? "").localeCompare(String(left?.record?.id ?? ""));
+        });
+      };
+      let ranked;
+      try {
+        ranked = matching.filterAndRankTalent(
+          [exact, sameScoreHighA, hardMiss, sameScoreHighB, preferredMiss],
+          conditions,
+        );
+      } finally {
+        Array.prototype.sort = nativeSort;
+      }
       return {
         conditionKeys: conditions.map((condition) => condition.key),
         emptyScore,
@@ -169,10 +302,7 @@ test.describe("餐饮人才工作台", () => {
         roleRegionScore,
         timingMissScore,
         timingMixedScore,
-        dimensionWeightTotal: Object.values(matching.TALENT_DIMENSION_WEIGHTS || {}).reduce(
-          (total, weight) => total + weight,
-          0,
-        ),
+        dimensionWeights: matching.TALENT_DIMENSION_WEIGHTS,
         ranked: ranked.map(({ record, match }) => ({
           id: record.id,
           score: match.score,
@@ -202,13 +332,27 @@ test.describe("餐饮人才工作台", () => {
     expect(result.singleScore.score).toBe(100);
     expect(result.singleScore.reasons).toContain("地区符合：北京");
     expect(result.roleRegionScore.score).toBe(50);
-    expect(result.dimensionWeightTotal).toBe(100);
+    expect(result.dimensionWeights).toEqual({
+      role: 20,
+      region: 20,
+      salaryMin: 20,
+      skills: 15,
+      experienceYears: 10,
+      lodging: 5,
+      restDays: 5,
+      timing: 5,
+    });
     expect(result.timingMissScore.score).toBe(95);
     expect(result.timingMixedScore.score).toBe(95);
     expect(result.timingMixedScore.reasons).toContain("到岗时间符合：可随时到岗");
     expect(result.timingMixedScore.misses).toContain("紧急度未满足：当前常规（原型）");
-    expect(result.ranked.map(({ id }) => id)).toEqual(["exact", "preferred-miss"]);
-    expect(result.ranked[1].misses).toEqual(
+    expect(result.ranked.map(({ id }) => id)).toEqual([
+      "same-score-high-a",
+      "same-score-high-b",
+      "exact",
+      "preferred-miss",
+    ]);
+    expect(result.ranked[3].misses).toEqual(
       expect.arrayContaining(["住宿偏好未满足：需要包吃住", "月休未满足：需要4天，当前2天"]),
     );
   });

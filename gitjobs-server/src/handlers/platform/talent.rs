@@ -77,7 +77,7 @@ mod tests {
         assert!(html.contains("界面原型数据，不代表真实招聘或求职信息"));
         assert!(html.contains("data-talent-mode=\"hiring\""));
         assert!(html.contains("data-talent-mode=\"seeking\""));
-        assert_eq!(html.matches("data-talent-card").count(), 16);
+        assert_eq!(html.matches("<article class=\"talent-card\"").count(), 16);
         assert!(html.contains("id=\"talent-detail-drawer\""));
         assert!(html.contains("aria-live=\"polite\""));
         assert!(html.contains("<html lang=\"zh-CN\""));

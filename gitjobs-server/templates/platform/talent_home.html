@@ -26,12 +26,41 @@
       initializeTalentWorkbench
     } from "/static/js/platform/talent-workbench.js";
 
-    initializeExplorationRail({
-      appId: "talent-app",
-      storageKey: "talent-theme",
-      eventName: "talent:theme",
-    });
-    const data = JSON.parse(document.getElementById("talent-data").textContent);
-    initializeTalentWorkbench(data);
+    try {
+      initializeExplorationRail({
+        appId: "talent-app",
+        storageKey: "talent-theme",
+        eventName: "talent:theme",
+      });
+    } catch {
+      // Theme enhancement is optional; talent results initialize independently.
+    }
+
+    const app = document.getElementById("talent-app");
+    const status = document.getElementById("talent-status");
+    const dataNode = document.getElementById("talent-data");
+    const showServerFallback = () => {
+      for (const card of document.querySelectorAll("[data-talent-card]")) card.hidden = false;
+      if (status) status.textContent = "交互数据暂不可用";
+      app?.removeAttribute("data-workbench-ready");
+    };
+    const hasValidShape = (data) =>
+      data !== null &&
+      typeof data === "object" &&
+      Array.isArray(data.hiring) &&
+      Array.isArray(data.seeking) && [...data.hiring, ...data.seeking].every(
+        (record) => record !== null && typeof record === "object" && typeof record.id === "string",
+      );
+
+    try {
+      if (!dataNode) throw new Error("talent data node missing");
+      const data = JSON.parse(dataNode.textContent || "");
+      if (!hasValidShape(data)) throw new Error("talent data shape invalid");
+      const state = initializeTalentWorkbench(data);
+      if (!state) throw new Error("talent workbench initialization failed");
+      app?.setAttribute("data-workbench-ready", "true");
+    } catch {
+      showServerFallback();
+    }
   </script>
 {% endblock content %}
