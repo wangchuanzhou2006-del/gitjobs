@@ -52,6 +52,7 @@ pub(crate) struct TalentRecord {
     pub prototype: bool,
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
     let fixtures = [
         (
@@ -163,6 +164,7 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
         .collect()
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 pub(crate) fn prototype_seeking_records() -> Vec<TalentRecord> {
     let fixtures = [
         (
