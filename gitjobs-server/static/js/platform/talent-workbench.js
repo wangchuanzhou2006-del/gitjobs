@@ -1,4 +1,5 @@
 import { filterAndRankTalent, parseTalentCommand } from "/static/js/platform/talent-matching.js";
+import { initializeTalentDrawer } from "/static/js/platform/talent-drawer.js";
 const COMMON_KEYS = new Set(["region", "role", "salaryMin", "skills"]);
 
 export const initializeTalentWorkbench = (data) => {
@@ -11,6 +12,8 @@ export const initializeTalentWorkbench = (data) => {
   const modeButtons = [...document.querySelectorAll("[data-talent-mode-button]")];
   const cards = [...document.querySelectorAll("[data-talent-card]")];
   if (!form || !input || !chips || !undo || !status || !host) return null;
+
+  const drawer = initializeTalentDrawer();
 
   const records = [...data.hiring, ...data.seeking];
   const recordById = new Map(records.map((record) => [record.id, record]));
@@ -105,6 +108,7 @@ export const initializeTalentWorkbench = (data) => {
       if (!record) return;
       state.selectedId = record.id;
       const match = matches.get(record.id) || filterAndRankTalent([record], state.conditions)[0]?.match;
+      drawer?.open(record, match, button);
       window.dispatchEvent(new CustomEvent("talent:selection", { detail: { record, match } }));
     });
   render();
