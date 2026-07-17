@@ -144,6 +144,20 @@ test.describe("talent workbench visual contract", () => {
       return [...ms(style.transitionDuration), ...ms(style.animationDuration)];
     });
     expect(values.every((value) => value <= 0.01)).toBe(true);
+
+    await card.hover();
+    expect(
+      await card.evaluate((node) => getComputedStyle(node).transform),
+    ).toBe("none");
+
+    const submit = page.locator('#talent-command-form button[type="submit"]');
+    await submit.hover();
+    await page.mouse.down();
+    const activeTransform = await submit.evaluate(
+      (node) => getComputedStyle(node).transform,
+    );
+    await page.mouse.up();
+    expect(activeTransform).toBe("none");
     await context.close();
   });
 

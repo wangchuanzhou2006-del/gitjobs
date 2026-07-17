@@ -185,6 +185,13 @@ a[href="#main-content"]:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .talent-card:hover,
+  .talent-command-bar button:active,
+  .talent-card button:active,
+  .talent-detail-panel button:active {
+    transform: none !important;
+  }
 }
 
 /* Font family */
