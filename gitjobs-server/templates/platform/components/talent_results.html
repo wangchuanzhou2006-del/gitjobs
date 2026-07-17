@@ -13,23 +13,83 @@
         <p>{{ record.scene }} · {{ record.region }} {{ record.district }}</p>
         <h3>{{ record.title }}</h3>
         <dl>
-          <div><dt>薪资</dt><dd>{{ record.salary_min }}–{{ record.salary_max }} 元/月</dd></div>
+          <div>
+            <dt>薪资</dt>
+            <dd>
+              {{ record.salary_min }}–{{ record.salary_max }} 元/月
+            </dd>
+          </div>
           <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
-          <div><dt>经验</dt><dd>{{ record.experience_years }} 年</dd></div>
-          <div><dt>工时</dt><dd>{{ record.hours_per_day }} 小时/天</dd></div>
-          <div><dt>休息</dt><dd>{{ record.rest_days }} 天/月</dd></div>
-          <div><dt>住宿</dt><dd>{{ record.lodging }}</dd></div>
-          <div><dt>住房补贴</dt><dd>{{ record.housing_allowance }} 元/月</dd></div>
-          <div><dt>到岗</dt><dd>{{ record.availability }}</dd></div>
-          <div><dt>紧急度</dt><dd>{{ record.urgency }}</dd></div>
-          <div><dt>可信度</dt><dd>{{ record.credibility }} / 100（原型字段）</dd></div>
-          <div><dt>来源</dt><dd>{{ record.source_label }}</dd></div>
-          <div><dt>更新</dt><dd>{{ record.updated_label }}</dd></div>
+          <div>
+            <dt>经验</dt>
+            <dd>
+              {{ record.experience_years }} 年
+            </dd>
+          </div>
+          <div>
+            <dt>工时</dt>
+            <dd>
+              {{ record.hours_per_day }} 小时/天
+            </dd>
+          </div>
+          <div>
+            <dt>休息</dt>
+            <dd>
+              {{ record.rest_days }} 天/月
+            </dd>
+          </div>
+          <div>
+            <dt>住宿</dt>
+            <dd>
+              {{ record.lodging }}
+            </dd>
+          </div>
+          <div>
+            <dt>住房补贴</dt>
+            <dd>
+              {{ record.housing_allowance }} 元/月
+            </dd>
+          </div>
+          <div>
+            <dt>到岗</dt>
+            <dd>
+              {{ record.availability }}
+            </dd>
+          </div>
+          <div>
+            <dt>紧急度</dt>
+            <dd>
+              {{ record.urgency }}
+            </dd>
+          </div>
+          <div>
+            <dt>可信度</dt>
+            <dd>
+              {{ record.credibility }} / 100（原型字段）
+            </dd>
+          </div>
+          <div data-talent-supporting-fact>
+            <dt>来源</dt>
+            <dd>
+              {{ record.source_label }}
+            </dd>
+          </div>
+          <div data-talent-supporting-fact>
+            <dt>更新</dt>
+            <dd>
+              {{ record.updated_label }}
+            </dd>
+          </div>
         </dl>
         <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
-        <p data-talent-match-score>等待输入条件</p>
-        <ul data-talent-match-reasons aria-label="推荐原因"></ul>
-        <button type="button" data-open-talent-detail data-talent-id="{{ record.id }}">查看详情</button>
+        <div class="talent-match-lens" data-talent-match-lens>
+          <p data-talent-match-score>等待输入条件</p>
+          <ul data-talent-match-reasons aria-label="推荐原因">
+          </ul>
+        </div>
+        <button type="button"
+                data-open-talent-detail
+                data-talent-id="{{ record.id }}">查看详情</button>
       </article>
     {% endfor %}
     {% for record in seeking_records %}
@@ -41,23 +101,83 @@
         <p>{{ record.scene }} · {{ record.region }} {{ record.district }}</p>
         <h3>{{ record.title }}</h3>
         <dl>
-          <div><dt>期望薪资</dt><dd>{{ record.salary_min }}–{{ record.salary_max }} 元/月</dd></div>
+          <div>
+            <dt>期望薪资</dt>
+            <dd>
+              {{ record.salary_min }}–{{ record.salary_max }} 元/月
+            </dd>
+          </div>
           <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
-          <div><dt>经验</dt><dd>{{ record.experience_years }} 年</dd></div>
-          <div><dt>期望工时</dt><dd>{{ record.hours_per_day }} 小时/天</dd></div>
-          <div><dt>期望休息</dt><dd>{{ record.rest_days }} 天/月</dd></div>
-          <div><dt>住宿</dt><dd>{{ record.lodging }}</dd></div>
-          <div><dt>住房补贴</dt><dd>{{ record.housing_allowance }} 元/月</dd></div>
-          <div><dt>到岗</dt><dd>{{ record.availability }}</dd></div>
-          <div><dt>紧急度</dt><dd>{{ record.urgency }}</dd></div>
-          <div><dt>可信度</dt><dd>{{ record.credibility }} / 100（原型字段）</dd></div>
-          <div><dt>来源</dt><dd>{{ record.source_label }}</dd></div>
-          <div><dt>更新</dt><dd>{{ record.updated_label }}</dd></div>
+          <div>
+            <dt>经验</dt>
+            <dd>
+              {{ record.experience_years }} 年
+            </dd>
+          </div>
+          <div>
+            <dt>期望工时</dt>
+            <dd>
+              {{ record.hours_per_day }} 小时/天
+            </dd>
+          </div>
+          <div>
+            <dt>期望休息</dt>
+            <dd>
+              {{ record.rest_days }} 天/月
+            </dd>
+          </div>
+          <div>
+            <dt>住宿</dt>
+            <dd>
+              {{ record.lodging }}
+            </dd>
+          </div>
+          <div>
+            <dt>住房补贴</dt>
+            <dd>
+              {{ record.housing_allowance }} 元/月
+            </dd>
+          </div>
+          <div>
+            <dt>到岗</dt>
+            <dd>
+              {{ record.availability }}
+            </dd>
+          </div>
+          <div>
+            <dt>紧急度</dt>
+            <dd>
+              {{ record.urgency }}
+            </dd>
+          </div>
+          <div>
+            <dt>可信度</dt>
+            <dd>
+              {{ record.credibility }} / 100（原型字段）
+            </dd>
+          </div>
+          <div data-talent-supporting-fact>
+            <dt>来源</dt>
+            <dd>
+              {{ record.source_label }}
+            </dd>
+          </div>
+          <div data-talent-supporting-fact>
+            <dt>更新</dt>
+            <dd>
+              {{ record.updated_label }}
+            </dd>
+          </div>
         </dl>
         <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
-        <p data-talent-match-score>等待输入条件</p>
-        <ul data-talent-match-reasons aria-label="推荐原因"></ul>
-        <button type="button" data-open-talent-detail data-talent-id="{{ record.id }}">查看详情</button>
+        <div class="talent-match-lens" data-talent-match-lens>
+          <p data-talent-match-score>等待输入条件</p>
+          <ul data-talent-match-reasons aria-label="推荐原因">
+          </ul>
+        </div>
+        <button type="button"
+                data-open-talent-detail
+                data-talent-id="{{ record.id }}">查看详情</button>
       </article>
     {% endfor %}
   </div>

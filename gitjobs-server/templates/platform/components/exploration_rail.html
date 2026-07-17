@@ -8,9 +8,12 @@
   情报</a>
   <nav aria-label="桌面主导航">
     <a class="opportunity-focus"
-       href="/opportunities"{% if page_id == PageId::Opportunities %} aria-current="page"{% endif %}>机会</a>
-    <a class="opportunity-focus" href="/talent"
-       title="现有招聘与求职"{% if page_id == PageId::Talent %} aria-current="page"{% endif %}>人才</a>
+       href="/opportunities"
+       {% if page_id == PageId::Opportunities %}aria-current="page"{% endif %}>机会</a>
+    <a class="opportunity-focus"
+       href="/talent"
+       title="现有招聘与求职"
+       {% if page_id == PageId::Talent %}aria-current="page"{% endif %}>人才</a>
     <span aria-disabled="true" title="后续阶段开放">情报</span>
     <span aria-disabled="true" title="后续阶段开放">企业</span>
   </nav>
@@ -24,10 +27,13 @@
      data-testid="mobile-opportunity-nav"
      aria-label="移动主导航">
   <a class="opportunity-focus"
-     href="/opportunities"{% if page_id == PageId::Opportunities %} aria-current="page"{% endif %}>机会</a>
+     href="/opportunities"
+     {% if page_id == PageId::Opportunities %}aria-current="page"{% endif %}>机会</a>
   <a class="opportunity-focus"
-     href="/talent"{% if page_id == PageId::Talent %} aria-current="page"{% endif %}>人才</a>
-  <a class="opportunity-focus" href="#ai-command-input">AI</a>
+     href="/talent"
+     {% if page_id == PageId::Talent %}aria-current="page"{% endif %}>人才</a>
+  <a class="opportunity-focus"
+     href="{% if page_id == PageId::Talent %}#talent-command-input{% else %}#ai-command-input{% endif %}">AI</a>
   <span aria-disabled="true">消息</span>
   <span aria-disabled="true">我的</span>
 </nav>

@@ -1,11 +1,13 @@
-const THEME_KEY = "opportunity-theme";
-
-export const initializeExplorationRail = () => {
-  const app = document.getElementById("opportunity-app");
+export const initializeExplorationRail = ({
+  appId = "opportunity-app",
+  storageKey = "opportunity-theme",
+  eventName = "opportunity:theme",
+} = {}) => {
+  const app = document.getElementById(appId);
   const toggle = document.getElementById("opportunity-theme-toggle");
   if (!app || !toggle) return;
 
-  const stored = localStorage.getItem(THEME_KEY);
+  const stored = localStorage.getItem(storageKey);
   const initial = stored === "dark" || stored === "light" ? stored : "light";
   app.dataset.theme = initial;
 
@@ -15,8 +17,8 @@ export const initializeExplorationRail = () => {
 
   toggle.addEventListener("click", () => {
     app.dataset.theme = app.dataset.theme === "dark" ? "light" : "dark";
-    localStorage.setItem(THEME_KEY, app.dataset.theme);
+    localStorage.setItem(storageKey, app.dataset.theme);
     syncLabel();
-    window.dispatchEvent(new CustomEvent("opportunity:theme", { detail: app.dataset.theme }));
+    window.dispatchEvent(new CustomEvent(eventName, { detail: app.dataset.theme }));
   });
 };

@@ -20,9 +20,17 @@
   </div>
   <script type="module">
     import {
+      initializeExplorationRail
+    } from "/static/js/platform/exploration-rail.js";
+    import {
       initializeTalentWorkbench
     } from "/static/js/platform/talent-workbench.js";
 
+    initializeExplorationRail({
+      appId: "talent-app",
+      storageKey: "talent-theme",
+      eventName: "talent:theme",
+    });
     const data = JSON.parse(document.getElementById("talent-data").textContent);
     initializeTalentWorkbench(data);
   </script>
