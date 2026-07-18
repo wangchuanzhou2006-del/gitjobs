@@ -125,6 +125,7 @@ pub(crate) async fn setup(
         // Public routes
         .route("/", get(jobboard::jobs::jobs_page))
         .route("/opportunities", get(platform::opportunities::page))
+        .route("/talent", get(platform::talent::page))
         .route("/about", get(jobboard::about::page))
         .route("/embed", get(jobboard::embed::jobs_page))
         .route("/embed/job/{job_id}/card.svg", get(jobboard::embed::job_card))
