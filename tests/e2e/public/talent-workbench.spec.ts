@@ -28,11 +28,13 @@ test.describe("餐饮人才工作台", () => {
   test("禁用 JavaScript 时招聘与求职各有 8 条服务端结果可读", async ({ browser }) => {
     const context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
+    const errors = captureBrowserErrors(page);
     await navigateWithRetries(page, "/talent", "talent workbench without JavaScript");
 
     await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]:visible')).toHaveCount(8);
     await expect(page.locator('[data-talent-card][data-talent-mode="seeking"]:visible')).toHaveCount(8);
     await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
+    expect(errors).toEqual([]);
     await context.close();
   });
 
