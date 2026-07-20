@@ -3,7 +3,32 @@
 -- ============================================================================
 
 begin;
-select plan(157);
+select plan(194);
+
+create function test_has_foreign_key(
+    child_table text,
+    child_column text,
+    parent_table text,
+    parent_column text
+) returns boolean language sql stable as $$
+    select exists (
+        select 1
+        from pg_constraint constraint_definition
+        join pg_class child_relation on child_relation.oid = constraint_definition.conrelid
+        join pg_class parent_relation on parent_relation.oid = constraint_definition.confrelid
+        join pg_attribute child_attribute
+          on child_attribute.attrelid = child_relation.oid
+         and child_attribute.attnum = constraint_definition.conkey[1]
+        join pg_attribute parent_attribute
+          on parent_attribute.attrelid = parent_relation.oid
+         and parent_attribute.attnum = constraint_definition.confkey[1]
+        where constraint_definition.contype = 'f'
+          and child_relation.relname = child_table
+          and child_attribute.attname = child_column
+          and parent_relation.relname = parent_table
+          and parent_attribute.attname = parent_column
+    );
+$$;
 
 -- ============================================================================
 -- TESTS
@@ -43,6 +68,13 @@ select has_table('seniority');
 select has_table('session');
 select has_table('user');
 select has_table('workplace');
+select has_table('talent_sources');
+select has_table('talent_import_batches');
+select has_table('talent_import_items');
+select has_table('talent_records');
+select has_table('talent_contacts');
+select has_table('talent_review_events');
+select has_table('talent_runtime_settings');
 
 -- Test: application columns should match expected
 select columns_are('application', array[
@@ -318,6 +350,56 @@ select columns_are('workplace', array[
     'name'
 ]);
 
+-- Test: talent import and review columns should match expected
+select columns_are('talent_sources', array[
+    'source_id', 'source_type', 'name', 'trust_status',
+    'auto_publish_enabled', 'published_count', 'reported_count',
+    'withdrawn_count', 'corrected_count', 'created_by', 'created_at',
+    'confirmed_by', 'confirmed_at', 'updated_at'
+]);
+
+select columns_are('talent_import_batches', array[
+    'batch_id', 'source_id', 'imported_by', 'raw_text_ciphertext',
+    'encryption_key_version', 'status', 'model_provider', 'model_name',
+    'prompt_version', 'item_count', 'processed_count', 'failed_count',
+    'created_at', 'completed_at', 'raw_delete_after', 'raw_deleted_at'
+]);
+
+select columns_are('talent_import_items', array[
+    'item_id', 'batch_id', 'position', 'raw_fragment_ciphertext',
+    'encryption_key_version', 'contact_candidates_ciphertext',
+    'contact_hashes', 'contact_masked', 'normalized_fingerprint',
+    'kind', 'status', 'extraction', 'extraction_confidence',
+    'validation_errors', 'risk_score', 'risk_level', 'risk_reasons',
+    'duplicate_candidates', 'published_record_id', 'lock_version',
+    'created_at', 'processed_at', 'reviewed_at', 'updated_at'
+]);
+
+select columns_are('talent_records', array[
+    'record_id', 'kind', 'title', 'scene', 'region', 'city', 'district',
+    'salary_min', 'salary_max', 'roles', 'skills', 'experience_years',
+    'hours_per_day', 'rest_days_per_month', 'lodging', 'housing_allowance',
+    'availability', 'urgency', 'source_id', 'source_label', 'published_at',
+    'expires_at', 'status', 'creation_source', 'created_at', 'updated_at',
+    'withdrawn_at'
+]);
+
+select columns_are('talent_contacts', array[
+    'contact_id', 'record_id', 'contact_type', 'ciphertext',
+    'encryption_key_version', 'normalized_hash', 'masked_value',
+    'created_at', 'deleted_at'
+]);
+
+select columns_are('talent_review_events', array[
+    'event_id', 'item_id', 'record_id', 'actor_type', 'actor_user_id',
+    'action', 'reason', 'before_snapshot', 'after_snapshot',
+    'model_provider', 'model_name', 'prompt_version', 'rule_version',
+    'policy_version', 'automatic_reason', 'created_at'
+]);
+
+select columns_are('talent_runtime_settings', array[
+    'singleton', 'auto_publish_enabled', 'updated_by', 'updated_at'
+]);
 -- Test: check expected functions exist
 select has_function('get_user_by_email');
 select has_function('get_user_by_id_verified');
@@ -419,6 +501,55 @@ select has_pk('seniority');
 select has_pk('session');
 select has_pk('user');
 select has_pk('workplace');
+select has_pk('talent_sources');
+select has_pk('talent_import_batches');
+select has_pk('talent_import_items');
+select has_pk('talent_records');
+select has_pk('talent_contacts');
+select has_pk('talent_review_events');
+select has_pk('talent_runtime_settings');
+
+-- Test: talent import and review foreign keys should exist
+select ok(test_has_foreign_key('talent_sources', 'created_by', 'user', 'user_id'), 'talent_sources.created_by should reference user.user_id');
+select ok(test_has_foreign_key('talent_sources', 'confirmed_by', 'user', 'user_id'), 'talent_sources.confirmed_by should reference user.user_id');
+select ok(test_has_foreign_key('talent_import_batches', 'source_id', 'talent_sources', 'source_id'), 'talent_import_batches.source_id should reference talent_sources.source_id');
+select ok(test_has_foreign_key('talent_import_batches', 'imported_by', 'user', 'user_id'), 'talent_import_batches.imported_by should reference user.user_id');
+select ok(test_has_foreign_key('talent_import_items', 'batch_id', 'talent_import_batches', 'batch_id'), 'talent_import_items.batch_id should reference talent_import_batches.batch_id');
+select ok(test_has_foreign_key('talent_import_items', 'published_record_id', 'talent_records', 'record_id'), 'talent_import_items.published_record_id should reference talent_records.record_id');
+select ok(test_has_foreign_key('talent_records', 'source_id', 'talent_sources', 'source_id'), 'talent_records.source_id should reference talent_sources.source_id');
+select ok(test_has_foreign_key('talent_contacts', 'record_id', 'talent_records', 'record_id'), 'talent_contacts.record_id should reference talent_records.record_id');
+select ok(test_has_foreign_key('talent_review_events', 'item_id', 'talent_import_items', 'item_id'), 'talent_review_events.item_id should reference talent_import_items.item_id');
+select ok(test_has_foreign_key('talent_review_events', 'record_id', 'talent_records', 'record_id'), 'talent_review_events.record_id should reference talent_records.record_id');
+select ok(test_has_foreign_key('talent_review_events', 'actor_user_id', 'user', 'user_id'), 'talent_review_events.actor_user_id should reference user.user_id');
+select ok(test_has_foreign_key('talent_runtime_settings', 'updated_by', 'user', 'user_id'), 'talent_runtime_settings.updated_by should reference user.user_id');
+
+-- Test: singleton and uniqueness invariants should exist
+select has_check('talent_runtime_settings', 'talent_runtime_settings_singleton_check');
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_source_type_name_idx'
+      and index_definition.indisunique
+      and pg_get_indexdef(index_definition.indexrelid) like '%(source_type, lower(name))%'
+), 'talent_source_type_name_idx should uniquely index source_type and lower(name)');
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_import_item_batch_position_idx'
+      and index_definition.indisunique
+      and pg_get_indexdef(index_definition.indexrelid) like '%(batch_id, "position")%'
+), 'talent_import_item_batch_position_idx should uniquely index batch_id and position');
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_import_item_published_record_idx'
+      and index_definition.indisunique
+      and pg_get_indexdef(index_definition.indexrelid) like '%(published_record_id)%'
+      and pg_get_expr(index_definition.indpred, index_definition.indrelid) = '(published_record_id IS NOT NULL)'
+), 'talent_import_item_published_record_idx should uniquely index non-null published_record_id');
 
 -- ============================================================================
 -- CLEANUP
