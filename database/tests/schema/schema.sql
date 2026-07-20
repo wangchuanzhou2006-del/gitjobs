@@ -3,13 +3,14 @@
 -- ============================================================================
 
 begin;
-select plan(194);
+select plan(195);
 
 create function test_has_foreign_key(
     child_table text,
     child_column text,
     parent_table text,
-    parent_column text
+    parent_column text,
+    delete_action "char"
 ) returns boolean language sql stable as $$
     select exists (
         select 1
@@ -27,6 +28,7 @@ create function test_has_foreign_key(
           and child_attribute.attname = child_column
           and parent_relation.relname = parent_table
           and parent_attribute.attname = parent_column
+          and constraint_definition.confdeltype = delete_action
     );
 $$;
 
@@ -510,21 +512,28 @@ select has_pk('talent_review_events');
 select has_pk('talent_runtime_settings');
 
 -- Test: talent import and review foreign keys should exist
-select ok(test_has_foreign_key('talent_sources', 'created_by', 'user', 'user_id'), 'talent_sources.created_by should reference user.user_id');
-select ok(test_has_foreign_key('talent_sources', 'confirmed_by', 'user', 'user_id'), 'talent_sources.confirmed_by should reference user.user_id');
-select ok(test_has_foreign_key('talent_import_batches', 'source_id', 'talent_sources', 'source_id'), 'talent_import_batches.source_id should reference talent_sources.source_id');
-select ok(test_has_foreign_key('talent_import_batches', 'imported_by', 'user', 'user_id'), 'talent_import_batches.imported_by should reference user.user_id');
-select ok(test_has_foreign_key('talent_import_items', 'batch_id', 'talent_import_batches', 'batch_id'), 'talent_import_items.batch_id should reference talent_import_batches.batch_id');
-select ok(test_has_foreign_key('talent_import_items', 'published_record_id', 'talent_records', 'record_id'), 'talent_import_items.published_record_id should reference talent_records.record_id');
-select ok(test_has_foreign_key('talent_records', 'source_id', 'talent_sources', 'source_id'), 'talent_records.source_id should reference talent_sources.source_id');
-select ok(test_has_foreign_key('talent_contacts', 'record_id', 'talent_records', 'record_id'), 'talent_contacts.record_id should reference talent_records.record_id');
-select ok(test_has_foreign_key('talent_review_events', 'item_id', 'talent_import_items', 'item_id'), 'talent_review_events.item_id should reference talent_import_items.item_id');
-select ok(test_has_foreign_key('talent_review_events', 'record_id', 'talent_records', 'record_id'), 'talent_review_events.record_id should reference talent_records.record_id');
-select ok(test_has_foreign_key('talent_review_events', 'actor_user_id', 'user', 'user_id'), 'talent_review_events.actor_user_id should reference user.user_id');
-select ok(test_has_foreign_key('talent_runtime_settings', 'updated_by', 'user', 'user_id'), 'talent_runtime_settings.updated_by should reference user.user_id');
+select ok(test_has_foreign_key('talent_sources', 'created_by', 'user', 'user_id', 'n'), 'talent_sources.created_by should delete set null');
+select ok(test_has_foreign_key('talent_sources', 'confirmed_by', 'user', 'user_id', 'n'), 'talent_sources.confirmed_by should delete set null');
+select ok(test_has_foreign_key('talent_import_batches', 'source_id', 'talent_sources', 'source_id', 'r'), 'talent_import_batches.source_id should delete restrict');
+select ok(test_has_foreign_key('talent_import_batches', 'imported_by', 'user', 'user_id', 'n'), 'talent_import_batches.imported_by should delete set null');
+select ok(test_has_foreign_key('talent_import_items', 'batch_id', 'talent_import_batches', 'batch_id', 'r'), 'talent_import_items.batch_id should delete restrict');
+select ok(test_has_foreign_key('talent_import_items', 'published_record_id', 'talent_records', 'record_id', 'n'), 'talent_import_items.published_record_id should delete set null');
+select ok(test_has_foreign_key('talent_records', 'source_id', 'talent_sources', 'source_id', 'n'), 'talent_records.source_id should delete set null');
+select ok(test_has_foreign_key('talent_contacts', 'record_id', 'talent_records', 'record_id', 'r'), 'talent_contacts.record_id should delete restrict');
+select ok(test_has_foreign_key('talent_review_events', 'item_id', 'talent_import_items', 'item_id', 'r'), 'talent_review_events.item_id should delete restrict');
+select ok(test_has_foreign_key('talent_review_events', 'record_id', 'talent_records', 'record_id', 'n'), 'talent_review_events.record_id should delete set null');
+select ok(test_has_foreign_key('talent_review_events', 'actor_user_id', 'user', 'user_id', 'n'), 'talent_review_events.actor_user_id should delete set null');
+select ok(test_has_foreign_key('talent_runtime_settings', 'updated_by', 'user', 'user_id', 'n'), 'talent_runtime_settings.updated_by should delete set null');
 
 -- Test: singleton and uniqueness invariants should exist
 select has_check('talent_runtime_settings', 'talent_runtime_settings_singleton_check');
+select is(
+    (select regexp_replace(pg_get_constraintdef(constraint_definition.oid, true), '\s+', ' ', 'g')
+     from pg_constraint constraint_definition
+     where constraint_definition.conname = 'talent_runtime_settings_singleton_check'),
+    'CHECK (singleton)',
+    'talent_runtime_settings_singleton_check should require singleton to be true'
+);
 select ok(exists (
     select 1
     from pg_index index_definition
