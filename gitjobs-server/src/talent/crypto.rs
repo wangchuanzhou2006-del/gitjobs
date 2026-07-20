@@ -6,7 +6,7 @@ use openssl::{
     sign::Signer,
     symm::{Cipher, decrypt_aead, encrypt_aead},
 };
-use rand::RngCore;
+use rand::RngExt;
 use thiserror::Error;
 
 use super::{ContactCandidate, ContactType};
@@ -84,27 +84,16 @@ impl TalentCrypto {
         })
     }
 
-    pub(crate) fn encrypt(
-        &self,
-        plaintext: &[u8],
-        aad: &[u8],
-    ) -> Result<EncryptedValue, CryptoError> {
+    pub(crate) fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<EncryptedValue, CryptoError> {
         let key = self
             .keys
             .get(&self.active_version)
             .ok_or(CryptoError::MissingActiveKey)?;
         let mut nonce = [0_u8; NONCE_LEN];
-        rand::rng().fill_bytes(&mut nonce);
+        rand::rng().fill(&mut nonce);
         let mut tag = [0_u8; TAG_LEN];
-        let ciphertext = encrypt_aead(
-            Cipher::aes_256_gcm(),
-            key,
-            Some(&nonce),
-            aad,
-            plaintext,
-            &mut tag,
-        )
-        .map_err(|_| CryptoError::EncryptionFailed)?;
+        let ciphertext = encrypt_aead(Cipher::aes_256_gcm(), key, Some(&nonce), aad, plaintext, &mut tag)
+            .map_err(|_| CryptoError::EncryptionFailed)?;
         let mut bytes = Vec::with_capacity(NONCE_LEN + ciphertext.len() + TAG_LEN);
         bytes.extend_from_slice(&nonce);
         bytes.extend_from_slice(&ciphertext);
@@ -116,11 +105,7 @@ impl TalentCrypto {
         })
     }
 
-    pub(crate) fn decrypt(
-        &self,
-        value: &EncryptedValue,
-        aad: &[u8],
-    ) -> Result<Vec<u8>, CryptoError> {
+    pub(crate) fn decrypt(&self, value: &EncryptedValue, aad: &[u8]) -> Result<Vec<u8>, CryptoError> {
         let key = self
             .keys
             .get(&value.key_version)
@@ -147,13 +132,10 @@ pub(crate) fn normalize_contact(contact_type: ContactType, value: &str) -> Strin
 }
 
 /// Creates a stable, type-separated HMAC-SHA256 contact hash.
-pub(crate) fn contact_hash(
-    crypto: &TalentCrypto,
-    contact: &ContactCandidate,
-) -> Result<String, CryptoError> {
+pub(crate) fn contact_hash(crypto: &TalentCrypto, contact: &ContactCandidate) -> Result<String, CryptoError> {
     let key = PKey::hmac(&crypto.contact_pepper).map_err(|_| CryptoError::ContactHashFailed)?;
-    let mut signer = Signer::new(MessageDigest::sha256(), &key)
-        .map_err(|_| CryptoError::ContactHashFailed)?;
+    let mut signer =
+        Signer::new(MessageDigest::sha256(), &key).map_err(|_| CryptoError::ContactHashFailed)?;
     signer
         .update(contact_type_discriminator(contact.contact_type).as_bytes())
         .map_err(|_| CryptoError::ContactHashFailed)?;
@@ -161,9 +143,7 @@ pub(crate) fn contact_hash(
     signer
         .update(normalize_contact(contact.contact_type, &contact.value).as_bytes())
         .map_err(|_| CryptoError::ContactHashFailed)?;
-    let digest = signer
-        .sign_to_vec()
-        .map_err(|_| CryptoError::ContactHashFailed)?;
+    let digest = signer.sign_to_vec().map_err(|_| CryptoError::ContactHashFailed)?;
 
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
@@ -327,10 +307,7 @@ mod tests {
     fn decrypts_values_with_an_older_configured_key() {
         let old_crypto = crypto("old", &[("old", PREVIOUS_KEY)]);
         let encrypted = old_crypto.encrypt(b"fictional source", b"contact:synthetic").unwrap();
-        let crypto = crypto(
-            "current",
-            &[("current", CURRENT_KEY), ("old", PREVIOUS_KEY)],
-        );
+        let crypto = crypto("current", &[("current", CURRENT_KEY), ("old", PREVIOUS_KEY)]);
 
         assert_eq!(
             crypto.decrypt(&encrypted, b"contact:synthetic").unwrap(),
@@ -360,7 +337,10 @@ mod tests {
             "testcandidate_01"
         );
         assert_eq!(normalize_contact(ContactType::Qq, " ００1-23  "), "00123");
-        assert_eq!(normalize_contact(ContactType::Other, "　Mixed Case Value　"), "Mixed Case Value");
+        assert_eq!(
+            normalize_contact(ContactType::Other, "　Mixed Case Value　"),
+            "Mixed Case Value"
+        );
     }
 
     #[test]
@@ -389,6 +369,9 @@ mod tests {
     #[test]
     fn masks_contacts_for_safe_display() {
         assert_eq!(mask_contact(ContactType::Phone, "13800000001"), "138****0001");
-        assert_eq!(mask_contact(ContactType::Wechat, "test_candidate_01"), "tes***_01");
+        assert_eq!(
+            mask_contact(ContactType::Wechat, "test_candidate_01"),
+            "tes***_01"
+        );
     }
 }

@@ -243,6 +243,7 @@ impl SecretValue {
         Self(value.into())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn expose_secret(&self) -> &str {
         &self.0
     }
