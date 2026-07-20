@@ -30,6 +30,7 @@ mod handlers;
 mod img;
 mod notifications;
 mod router;
+mod talent;
 mod templates;
 mod validation;
 mod workers;
