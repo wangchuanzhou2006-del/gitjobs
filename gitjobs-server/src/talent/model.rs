@@ -79,14 +79,14 @@ pub(crate) enum ContactType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ContactCandidate {
     pub contact_type: ContactType,
     pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RiskReason {
     pub code: String,
     pub explanation: String,
@@ -95,7 +95,7 @@ pub(crate) struct RiskReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DuplicateCandidate {
     pub candidate_item_id: Option<Uuid>,
     pub candidate_record_id: Option<Uuid>,
@@ -132,7 +132,7 @@ pub(crate) struct TalentExtraction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TextFragment {
     pub position: usize,
     pub start_byte: usize,

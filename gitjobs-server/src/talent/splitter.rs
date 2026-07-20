@@ -64,11 +64,18 @@ impl PendingFragment {
         }
     }
 
-    fn into_fragment(mut self, position: usize, limits: SplitLimits) -> Result<TextFragment, SplitError> {
+    fn into_fragment(
+        mut self,
+        position: usize,
+        limits: SplitLimits,
+    ) -> Result<Option<TextFragment>, SplitError> {
         while self.lines.last().is_some_and(|line| line.trim().is_empty()) {
             self.lines.pop();
         }
         let text = self.lines.join("\n");
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
         let actual_bytes = text.len();
         if actual_bytes > limits.max_fragment_bytes {
             return Err(SplitError::FragmentTooLarge {
@@ -78,12 +85,12 @@ impl PendingFragment {
             });
         }
 
-        Ok(TextFragment {
+        Ok(Some(TextFragment {
             position,
             start_byte: self.start_byte,
             end_byte: self.end_byte,
             text,
-        })
+        }))
     }
 }
 
@@ -125,15 +132,19 @@ pub(crate) fn split_messages(raw: &str, limits: SplitLimits) -> Result<Vec<TextF
         }
 
         if line.is_blank() {
-            blank_lines += 1;
-            if blank_lines == 2 {
-                finish_fragment(&mut pending, &mut fragments, limits)?;
+            let Some(fragment) = pending.as_mut() else {
                 continue;
+            };
+            blank_lines += 1;
+            if blank_lines >= 2 {
+                finish_fragment(&mut pending, &mut fragments, limits)?;
+            } else {
+                fragment.push_line(&line);
             }
-        } else {
-            blank_lines = 0;
+            continue;
         }
 
+        blank_lines = 0;
         pending
             .get_or_insert_with(|| PendingFragment::new(line.start))
             .push_line(&line);
@@ -153,7 +164,9 @@ fn finish_fragment(
     };
 
     let position = fragments.len();
-    let fragment = fragment.into_fragment(position, limits)?;
+    let Some(fragment) = fragment.into_fragment(position, limits)? else {
+        return Ok(());
+    };
     fragments.push(fragment);
     if fragments.len() > limits.max_fragments {
         return Err(SplitError::TooManyFragments {
@@ -238,8 +251,7 @@ fn is_date(value: &str) -> bool {
     let (month, day) = match bytes.len() {
         5 if matches!(bytes[2], b'-' | b'/') => (decimal(&bytes[0..2]), decimal(&bytes[3..5])),
         10 if bytes[0..4].iter().all(|byte| byte.is_ascii_digit())
-            && matches!(bytes[4], b'-' | b'/')
-            && matches!(bytes[7], b'-' | b'/') =>
+            && ((bytes[4] == b'-' && bytes[7] == b'-') || (bytes[4] == b'/' && bytes[7] == b'/')) =>
         {
             (decimal(&bytes[5..7]), decimal(&bytes[8..10]))
         }

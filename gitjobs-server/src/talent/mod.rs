@@ -8,7 +8,10 @@ pub(crate) use splitter::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{ImportItemStatus, SplitError, SplitLimits, TalentExtraction, split_messages};
+    use super::{
+        ContactCandidate, ContactType, DuplicateCandidate, ImportItemStatus, RiskReason, SplitError,
+        SplitLimits, TalentExtraction, TextFragment, split_messages,
+    };
 
     #[test]
     fn import_item_transitions_follow_the_review_workflow() {
@@ -167,5 +170,105 @@ mod tests {
 
         assert_eq!(fragments.len(), 1);
         assert_eq!(fragments[0].text, raw);
+    }
+
+    #[test]
+    fn auxiliary_domain_structs_serialize_rust_field_names_as_snake_case() {
+        let contact = serde_json::to_value(ContactCandidate {
+            contact_type: ContactType::Phone,
+            value: "reserved_contact_01".to_owned(),
+        })
+        .unwrap();
+        let risk = serde_json::to_value(RiskReason {
+            code: "synthetic_risk".to_owned(),
+            explanation: "synthetic explanation".to_owned(),
+            evidence: None,
+            hard_block: true,
+        })
+        .unwrap();
+        let duplicate = serde_json::to_value(DuplicateCandidate {
+            candidate_item_id: None,
+            candidate_record_id: None,
+            score: 0.5,
+            reasons: vec!["synthetic reason".to_owned()],
+            high_similarity: true,
+        })
+        .unwrap();
+        let fragment = serde_json::to_value(TextFragment {
+            position: 0,
+            start_byte: 1,
+            end_byte: 2,
+            text: "synthetic text".to_owned(),
+        })
+        .unwrap();
+
+        assert!(contact.get("contact_type").is_some());
+        assert!(contact.get("contactType").is_none());
+        assert!(risk.get("hard_block").is_some());
+        assert!(risk.get("hardBlock").is_none());
+        assert!(duplicate.get("candidate_item_id").is_some());
+        assert!(duplicate.get("candidateItemId").is_none());
+        assert!(fragment.get("start_byte").is_some());
+        assert!(fragment.get("startByte").is_none());
+    }
+
+    #[test]
+    fn leading_blank_runs_do_not_emit_empty_fragments() {
+        let fragments = split_messages("\n\n\n正文", SplitLimits::default()).unwrap();
+
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].text, "正文");
+    }
+
+    #[test]
+    fn long_interior_blank_runs_terminate_a_fragment_once() {
+        let fragments = split_messages("前文\n\n\n\n后文", SplitLimits::default()).unwrap();
+
+        assert_eq!(fragments.len(), 2);
+        assert_eq!(fragments[0].text, "前文");
+        assert_eq!(fragments[1].text, "后文");
+    }
+
+    #[test]
+    fn trailing_blank_runs_do_not_emit_empty_fragments() {
+        let fragments = split_messages("正文\n\n\n", SplitLimits::default()).unwrap();
+
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].text, "正文");
+    }
+
+    #[test]
+    fn headers_accept_only_the_confirmed_date_and_timestamp_forms() {
+        for header in [
+            "虚构甲: 07/13 10:00:00".to_owned(),
+            "虚构乙: 2026-07-13 10:00:00".to_owned(),
+            "虚构丙: 2026/07/13 10:00:00".to_owned(),
+            format!("{} 10:00:00", "虚".repeat(80)),
+        ] {
+            let raw = format!("{header}\n正文");
+            let fragments = split_messages(&raw, SplitLimits::default()).unwrap();
+            assert_eq!(fragments.len(), 1, "{header}");
+            assert_eq!(fragments[0].text, "正文", "{header}");
+        }
+
+        for header in [
+            "虚构甲: 2026-07/13 10:00:00".to_owned(),
+            "虚构乙: 2026/07-13 10:00:00".to_owned(),
+            "虚构丙 24:00:00".to_owned(),
+            "虚构丁 10:60:00".to_owned(),
+            "虚构戊 10:00:60".to_owned(),
+            "虚构己: 00-13 10:00:00".to_owned(),
+            "虚构庚: 13-13 10:00:00".to_owned(),
+            "虚构辛: 07-00 10:00:00".to_owned(),
+            "虚构壬: 07-32 10:00:00".to_owned(),
+            format!("{} 10:00:00", "虚".repeat(81)),
+            "虚构癸 [10:00:00]".to_owned(),
+            "虚构子 10:00:00 正文".to_owned(),
+        ] {
+            let raw = format!("{header}\n正文");
+            let fragments = split_messages(&raw, SplitLimits::default()).unwrap();
+            assert_eq!(fragments.len(), 1, "{header}");
+            assert_eq!(fragments[0].text, raw, "{header}");
+        }
     }
 }
