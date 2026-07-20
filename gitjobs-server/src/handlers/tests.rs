@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::User as AuthUser,
-    config::{CookieConfig, HttpServerConfig, LoginOptions},
+    config::{CookieConfig, HttpServerConfig, LoginOptions, SecretValue, TalentConfig, TalentEncryptionConfig},
     db::{DynDB, dashboard::employer::ApplicationsSearchOutput, jobboard::JobsSearchOutput, mock::MockDB},
     event_tracker::{Event, MockEventTracker},
     handlers::auth::{AUTH_PROVIDER_KEY, SELECTED_EMPLOYER_ID_KEY},
@@ -504,6 +504,16 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
         },
         oauth2: HashMap::new(),
         oidc: HashMap::new(),
+        talent: TalentConfig {
+            prototype_data: false,
+            encryption: TalentEncryptionConfig {
+                active_version: Some("test-v1".to_owned()),
+                keys: [("test-v1".to_owned(), SecretValue::new("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"))]
+                    .into_iter()
+                    .collect(),
+                contact_pepper: Some(SecretValue::new("fictional-test-pepper")),
+            },
+        },
 
         analytics: None,
         basic_auth: None,

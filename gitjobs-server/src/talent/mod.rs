@@ -1,9 +1,12 @@
 #[allow(dead_code)]
 pub(crate) mod model;
 
+pub(crate) mod crypto;
+
 pub(crate) mod splitter;
 
 pub(crate) use model::*;
+pub(crate) use crypto::*;
 pub(crate) use splitter::*;
 
 #[cfg(test)]

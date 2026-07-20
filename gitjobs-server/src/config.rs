@@ -1,6 +1,6 @@
 //! This module defines types to represent the server configuration.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, fmt, path::PathBuf};
 
 use anyhow::Result;
 use deadpool_postgres::Config as DbConfig;
@@ -103,6 +103,9 @@ pub(crate) struct HttpServerConfig {
     pub oauth2: OAuth2Config,
     /// `Oidc` providers configuration.
     pub oidc: OidcConfig,
+    /// Talent import data protection configuration.
+    #[serde(default)]
+    pub talent: TalentConfig,
 
     /// Optional analytics configuration.
     pub analytics: Option<AnalyticsConfig>,
@@ -205,4 +208,100 @@ pub(crate) struct OidcProviderConfig {
     pub redirect_uri: String,
     /// Scopes requested from the provider.
     pub scopes: Vec<String>,
+}
+
+/// Talent import settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct TalentConfig {
+    /// Enable public prototype data while the talent import flow is unavailable.
+    #[serde(default)]
+    pub prototype_data: bool,
+    /// Encryption and contact deduplication secrets.
+    #[serde(default)]
+    pub encryption: TalentEncryptionConfig,
+}
+
+/// Encryption settings for protected talent source data.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct TalentEncryptionConfig {
+    /// Version used for new AES-256-GCM envelopes.
+    pub active_version: Option<String>,
+    /// AES-256 keys, keyed by their version.
+    #[serde(default)]
+    pub keys: HashMap<String, SecretValue>,
+    /// Independent HMAC-SHA256 pepper for contact deduplication.
+    pub contact_pepper: Option<SecretValue>,
+}
+
+/// A configuration secret that is never rendered in debug or serialized output.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct SecretValue(String);
+
+impl SecretValue {
+    #[cfg(test)]
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn expose_secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self)
+    }
+}
+
+impl Serialize for SecretValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str("[REDACTED]")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SecretValue, TalentConfig, TalentEncryptionConfig};
+
+    const TEST_SECRET: &str = "fictional-config-secret";
+
+    #[test]
+    fn talent_config_defaults_to_disabled_without_secrets() {
+        let config = TalentConfig::default();
+
+        assert!(!config.prototype_data);
+        assert!(config.encryption.active_version.is_none());
+        assert!(config.encryption.keys.is_empty());
+        assert!(config.encryption.contact_pepper.is_none());
+    }
+
+    #[test]
+    fn secret_values_are_redacted_in_debug_and_serialized_output() {
+        let secret: SecretValue = serde_json::from_str(&format!("\"{TEST_SECRET}\"")).unwrap();
+        let config = TalentEncryptionConfig {
+            active_version: Some("test-v1".to_owned()),
+            keys: [("test-v1".to_owned(), secret.clone())].into_iter().collect(),
+            contact_pepper: Some(secret),
+        };
+        let debug = format!("{config:?}");
+        let serialized = serde_json::to_string(&config).unwrap();
+
+        assert!(debug.contains("[REDACTED]"));
+        assert!(serialized.contains("[REDACTED]"));
+        assert!(!debug.contains(TEST_SECRET));
+        assert!(!serialized.contains(TEST_SECRET));
+    }
 }
