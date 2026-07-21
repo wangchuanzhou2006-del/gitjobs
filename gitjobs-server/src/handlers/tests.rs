@@ -518,6 +518,7 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
                 .collect(),
                 contact_pepper: Some(SecretValue::new("fictional-test-pepper")),
             },
+            ai: None,
         },
 
         analytics: None,

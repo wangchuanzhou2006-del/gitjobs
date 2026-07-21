@@ -3,12 +3,22 @@ pub(crate) mod model;
 
 pub(crate) mod crypto;
 
+pub(crate) mod ai;
+
+pub(crate) mod validation;
+
 pub(crate) mod splitter;
 
 #[allow(unused_imports)]
+pub(crate) use ai::*;
+#[allow(unused_imports)]
 pub(crate) use crypto::*;
+#[allow(unused_imports)]
 pub(crate) use model::*;
 pub(crate) use splitter::*;
+#[allow(unused_imports)]
+#[allow(unused_imports)]
+pub(crate) use validation::*;
 
 #[cfg(test)]
 mod tests {

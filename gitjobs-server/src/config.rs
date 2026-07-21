@@ -219,6 +219,17 @@ pub(crate) struct TalentConfig {
     /// Encryption and contact deduplication secrets.
     #[serde(default)]
     pub encryption: TalentEncryptionConfig,
+    /// Optional OpenAI-compatible extraction provider settings.
+    #[serde(default)]
+    pub ai: Option<TalentAiConfig>,
+}
+
+/// OpenAI-compatible talent extraction provider settings.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct TalentAiConfig {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: SecretValue,
 }
 
 /// Encryption settings for protected talent source data.
@@ -285,6 +296,7 @@ mod tests {
 
         assert!(!config.prototype_data);
         assert!(config.encryption.active_version.is_none());
+        assert!(config.ai.is_none());
         assert!(config.encryption.keys.is_empty());
         assert!(config.encryption.contact_pepper.is_none());
     }

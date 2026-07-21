@@ -23,3 +23,10 @@ server:
     linuxfoundation: false
   oauth2: {}
   oidc: {}
+  talent:
+    enabled: false
+    prototype_data: true
+    # Set GITJOBS_SERVER__TALENT__AI__API_KEY in the environment; never put a key here.
+    ai:
+      base_url: https://api.example.invalid/v1
+      model: replace-with-compatible-model
