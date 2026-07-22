@@ -8,7 +8,7 @@ use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use tracing::instrument;
 
 /// Main server configuration struct, containing all sub-configurations.
@@ -211,8 +211,11 @@ pub(crate) struct OidcProviderConfig {
 }
 
 /// Talent import settings.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct TalentConfig {
+    /// Enable the OpenAI-compatible talent extraction provider.
+    #[serde(default)]
+    pub enabled: bool,
     /// Enable public prototype data while the talent import flow is unavailable.
     #[serde(default)]
     pub prototype_data: bool,
@@ -222,6 +225,58 @@ pub(crate) struct TalentConfig {
     /// Optional OpenAI-compatible extraction provider settings.
     #[serde(default)]
     pub ai: Option<TalentAiConfig>,
+}
+
+impl TalentConfig {
+    /// Return provider settings only when talent AI is explicitly enabled.
+    pub(crate) fn ai_config(&self) -> Option<&TalentAiConfig> {
+        self.enabled.then_some(self.ai.as_ref()).flatten()
+    }
+}
+
+#[derive(Deserialize)]
+struct TalentConfigRepr {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    prototype_data: bool,
+    #[serde(default)]
+    encryption: TalentEncryptionConfig,
+    #[serde(default)]
+    ai: Option<TalentAiConfigRepr>,
+}
+
+#[derive(Deserialize)]
+struct TalentAiConfigRepr {
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<SecretValue>,
+}
+
+impl<'de> Deserialize<'de> for TalentConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = TalentConfigRepr::deserialize(deserializer)?;
+        let ai = if repr.enabled {
+            let ai = repr.ai.ok_or_else(|| D::Error::missing_field("ai"))?;
+            Some(TalentAiConfig {
+                base_url: ai.base_url.ok_or_else(|| D::Error::missing_field("ai.base_url"))?,
+                model: ai.model.ok_or_else(|| D::Error::missing_field("ai.model"))?,
+                api_key: ai.api_key.ok_or_else(|| D::Error::missing_field("ai.api_key"))?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self {
+            enabled: repr.enabled,
+            prototype_data: repr.prototype_data,
+            encryption: repr.encryption,
+            ai,
+        })
+    }
 }
 
 /// OpenAI-compatible talent extraction provider settings.
@@ -286,7 +341,9 @@ impl Serialize for SecretValue {
 
 #[cfg(test)]
 mod tests {
-    use super::{SecretValue, TalentConfig, TalentEncryptionConfig};
+    use std::path::PathBuf;
+
+    use super::{Config, SecretValue, TalentConfig, TalentEncryptionConfig};
 
     const TEST_SECRET: &str = "fictional-config-secret";
 
@@ -299,6 +356,58 @@ mod tests {
         assert!(config.ai.is_none());
         assert!(config.encryption.keys.is_empty());
         assert!(config.encryption.contact_pepper.is_none());
+    }
+
+    #[test]
+    fn disabled_local_example_loads_without_an_ai_api_key() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/examples/server.local.yml");
+
+        let config = Config::new(Some(&path)).expect("disabled example should load without secrets");
+
+        assert!(!config.server.talent.enabled);
+        assert!(config.server.talent.ai_config().is_none());
+    }
+
+    #[test]
+    fn enabled_talent_ai_requires_every_provider_setting() {
+        for incomplete in [
+            serde_json::json!({"enabled": true}),
+            serde_json::json!({
+                "enabled": true,
+                "ai": {"model": "test-model", "api_key": TEST_SECRET},
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ai": {"base_url": "https://api.example.invalid/v1", "api_key": TEST_SECRET},
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ai": {
+                    "base_url": "https://api.example.invalid/v1",
+                    "model": "test-model",
+                },
+            }),
+        ] {
+            assert!(serde_json::from_value::<TalentConfig>(incomplete).is_err());
+        }
+    }
+
+    #[test]
+    fn enabled_talent_ai_exposes_only_a_complete_provider_config() {
+        let config: TalentConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "ai": {
+                "base_url": "https://api.example.invalid/v1",
+                "model": "test-model",
+                "api_key": TEST_SECRET,
+            },
+        }))
+        .unwrap();
+
+        let ai = config.ai_config().unwrap();
+        assert_eq!(ai.base_url, "https://api.example.invalid/v1");
+        assert_eq!(ai.model, "test-model");
+        assert_eq!(ai.api_key.expose_secret(), TEST_SECRET);
     }
 
     #[test]

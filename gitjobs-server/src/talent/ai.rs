@@ -30,11 +30,25 @@ pub(crate) trait TalentAiProvider: Send + Sync {
 pub(crate) struct OpenAiCompatibleProvider {
     config: TalentAiConfig,
     client: reqwest::Client,
+    request_timeout: Duration,
 }
 
 impl OpenAiCompatibleProvider {
     pub(crate) fn new(config: TalentAiConfig, client: reqwest::Client) -> Self {
-        Self { config, client }
+        Self {
+            config,
+            client,
+            request_timeout: REQUEST_TIMEOUT,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_timeout(config: TalentAiConfig, client: reqwest::Client, request_timeout: Duration) -> Self {
+        Self {
+            config,
+            client,
+            request_timeout,
+        }
     }
 }
 
@@ -94,58 +108,72 @@ struct CompletionMessage {
 #[async_trait]
 impl TalentAiProvider for OpenAiCompatibleProvider {
     async fn extract(&self, request: ExtractionRequest) -> Result<TalentExtraction, AiError> {
-        let endpoint = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
-        let payload = CompletionRequest {
-            model: &self.config.model,
-            messages: [
-                ChatMessage {
-                    role: "system",
-                    content: SYSTEM_PROMPT,
-                },
-                ChatMessage {
-                    role: "user",
-                    content: &request.fragment,
-                },
-            ],
-            temperature: 0,
-            response_format: ResponseFormat { kind: "json_object" },
-        };
-        let send = self
-            .client
-            .post(endpoint)
-            .bearer_auth(self.config.api_key.expose_secret())
-            .json(&payload)
-            .send();
-        let response = match tokio::time::timeout(REQUEST_TIMEOUT, send).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) if error.is_timeout() => return Err(AiError::Timeout),
-            Ok(Err(_)) => return Err(AiError::Transport),
-            Err(_) => return Err(AiError::Timeout),
-        };
-        if !response.status().is_success() {
-            return Err(AiError::HttpStatus(response.status()));
-        }
-        let completion: CompletionResponse = response.json().await.map_err(|_| AiError::InvalidResponse)?;
-        let content = completion
-            .choices
-            .into_iter()
-            .next()
-            .map(|choice| choice.message.content)
-            .filter(|content| !content.trim().is_empty())
-            .ok_or(AiError::MissingChoice)?;
-        let value: serde_json::Value = serde_json::from_str(&content).map_err(|_| AiError::InvalidJson)?;
-        serde_json::from_value(value).map_err(|_| AiError::InvalidSchema)
+        tokio::time::timeout(self.request_timeout, async {
+            let endpoint = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+            let payload = CompletionRequest {
+                model: &self.config.model,
+                messages: [
+                    ChatMessage {
+                        role: "system",
+                        content: SYSTEM_PROMPT,
+                    },
+                    ChatMessage {
+                        role: "user",
+                        content: &request.fragment,
+                    },
+                ],
+                temperature: 0,
+                response_format: ResponseFormat { kind: "json_object" },
+            };
+            let response = self
+                .client
+                .post(endpoint)
+                .bearer_auth(self.config.api_key.expose_secret())
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        AiError::Timeout
+                    } else {
+                        AiError::Transport
+                    }
+                })?;
+            if !response.status().is_success() {
+                return Err(AiError::HttpStatus(response.status()));
+            }
+            let completion: CompletionResponse = response.json().await.map_err(|error| {
+                if error.is_timeout() {
+                    AiError::Timeout
+                } else {
+                    AiError::InvalidResponse
+                }
+            })?;
+            let content = completion
+                .choices
+                .into_iter()
+                .next()
+                .map(|choice| choice.message.content)
+                .filter(|content| !content.trim().is_empty())
+                .ok_or(AiError::MissingChoice)?;
+            let value: serde_json::Value =
+                serde_json::from_str(&content).map_err(|_| AiError::InvalidJson)?;
+            serde_json::from_value(value).map_err(|_| AiError::InvalidSchema)
+        })
+        .await
+        .unwrap_or(Err(AiError::Timeout))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{future::IntoFuture, sync::Arc};
+    use std::{convert::Infallible, future::IntoFuture, sync::Arc, time::Duration};
 
     use axum::{
         Json, Router,
+        body::{Body, Bytes},
         extract::State,
-        http::{HeaderMap, StatusCode},
+        http::{HeaderMap, Response, StatusCode},
         routing::post,
     };
     use tokio::net::TcpListener;
@@ -201,6 +229,43 @@ mod tests {
             },
             reqwest::Client::new(),
         )
+    }
+
+    async fn stalled_completion_body() -> Response<Body> {
+        let body = Body::from_stream(futures::stream::pending::<Result<Bytes, Infallible>>());
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn provider_deadline_includes_reading_the_response_body() {
+        let app = Router::new().route("/v1/chat/completions", post(stalled_completion_body));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).into_future().await.unwrap();
+        });
+        let provider = OpenAiCompatibleProvider::with_timeout(
+            TalentAiConfig {
+                base_url: format!("http://{address}/v1"),
+                model: "test-model".to_owned(),
+                api_key: SecretValue::new("test-api-key"),
+            },
+            reqwest::Client::new(),
+            Duration::from_millis(25),
+        );
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            provider.extract(ExtractionRequest::new("candidate text")),
+        )
+        .await
+        .expect("provider should enforce its own deadline");
+
+        assert!(matches!(result, Err(AiError::Timeout)));
     }
 
     fn valid_extraction() -> TalentExtraction {

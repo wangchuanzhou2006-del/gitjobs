@@ -507,6 +507,7 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
         oauth2: HashMap::new(),
         oidc: HashMap::new(),
         talent: TalentConfig {
+            enabled: false,
             prototype_data: false,
             encryption: TalentEncryptionConfig {
                 active_version: Some("test-v1".to_owned()),
