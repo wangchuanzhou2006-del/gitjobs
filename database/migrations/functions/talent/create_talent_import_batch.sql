@@ -10,8 +10,10 @@ begin
     end if;
 
     v_items := p_import->'items';
-    if v_items is null or jsonb_typeof(v_items) <> 'array' or jsonb_array_length(v_items) = 0 then
-        raise exception 'talent import must contain fragments' using errcode = '22023';
+    if v_items is null
+       or jsonb_typeof(v_items) <> 'array'
+       or jsonb_array_length(v_items) not between 1 and 500 then
+        raise exception 'talent import must contain between 1 and 500 items' using errcode = '22023';
     end if;
     if coalesce(p_import->>'raw_text_ciphertext', '') !~ '^(?:[0-9a-fA-F]{2})+$' then
         raise exception 'invalid encrypted talent import payload' using errcode = '22023';

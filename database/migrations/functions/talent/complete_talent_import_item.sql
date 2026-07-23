@@ -3,11 +3,9 @@ create or replace function complete_talent_import_item(p_completion jsonb)
 returns void as $$
 declare
     v_batch_id uuid;
-    v_status text;
 begin
-    v_status := p_completion->>'status';
-    if v_status not in ('needs_review', 'auto_published') then
-        raise exception 'invalid completed talent import item status' using errcode = '22023';
+    if p_completion ? 'status' and p_completion->>'status' <> 'needs_review' then
+        raise exception 'talent import completion can only require review' using errcode = '22023';
     end if;
     if jsonb_typeof(coalesce(p_completion->'extraction', 'null'::jsonb)) <> 'object' then
         raise exception 'talent extraction must be a JSON object' using errcode = '22023';
@@ -19,7 +17,7 @@ begin
 
     update talent_import_items
     set
-        status = v_status,
+        status = 'needs_review',
         extraction = (p_completion->'extraction') - 'contacts',
         extraction_confidence = nullif(p_completion->>'extraction_confidence', '')::numeric,
         contact_candidates_ciphertext = nullif(p_completion->>'contact_candidates_ciphertext', ''),

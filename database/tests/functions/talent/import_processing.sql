@@ -1,5 +1,5 @@
 begin;
-select plan(16);
+select plan(20);
 
 \set sourceCreator '00000000-0000-0000-0000-000000000511'
 
@@ -102,6 +102,54 @@ select is(
     'a failed fragment insert leaves no partial batch'
 );
 
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', '212223',
+                'encryption_key_version', 1,
+                'items', (
+                    select jsonb_agg(
+                        jsonb_build_object(
+                            'position', position,
+                            'raw_fragment_ciphertext', '24',
+                            'encryption_key_version', 1,
+                            'kind', 'hiring'
+                        )
+                    )
+                    from generate_series(0, 500) position
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '22023',
+    'talent import must contain between 1 and 500 items',
+    'database boundary rejects more than five hundred fragments'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', '252627',
+                'encryption_key_version', 1,
+                'items', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '22023',
+    'talent import must contain between 1 and 500 items',
+    'database boundary rejects an empty fragment collection'
+);
+
 select claim_talent_import_item() as first_claim
 \gset
 
@@ -126,6 +174,24 @@ select is(
     'claim marks its batch as processing'
 );
 
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'status', 'auto_published',
+                'extraction', jsonb_build_object('kind', 'hiring')
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion can only require review',
+    'worker completion cannot bypass automatic publication policy'
+);
+
 select lives_ok(
     format(
         $sql$
@@ -136,7 +202,12 @@ select lives_ok(
                 'extraction', jsonb_build_object(
                     'kind', 'hiring',
                     'title', 'Synthetic Rust Role',
-                    'contacts', jsonb_build_array()
+                    'contacts', jsonb_build_array(
+                        jsonb_build_object(
+                            'contact_type', 'wechat',
+                            'value', 'fictional_complete_contact_001'
+                        )
+                    )
                 ),
                 'extraction_confidence', 0.82,
                 'contact_candidates_ciphertext', '161718',
@@ -168,8 +239,17 @@ select results_eq(
 );
 
 select ok(
-    not (
-        select extraction @? '$.contacts[*]'
+    (
+        select not extraction ? 'contacts'
+        from talent_import_items
+        where item_id = (:'first_claim'::jsonb->>'item_id')::uuid
+    ),
+    'stored extraction contains no contacts key'
+);
+
+select ok(
+    (
+        select extraction::text not like '%fictional_complete_contact_001%'
         from talent_import_items
         where item_id = (:'first_claim'::jsonb->>'item_id')::uuid
     ),
