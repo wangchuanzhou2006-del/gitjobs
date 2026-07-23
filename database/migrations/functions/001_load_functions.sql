@@ -73,6 +73,13 @@
 {{ template "syncer/update_member.sql" }}
 {{ template "syncer/update_project.sql" }}
 
+{{ template "talent/upsert_talent_source.sql" }}
+{{ template "talent/create_talent_import_batch.sql" }}
+{{ template "talent/list_talent_import_batches.sql" }}
+{{ template "talent/claim_talent_import_item.sql" }}
+{{ template "talent/complete_talent_import_item.sql" }}
+{{ template "talent/fail_talent_import_item.sql" }}
+
 {{ template "workers/archive_expired_jobs.sql" }}
 
 ---- create above / drop below ----

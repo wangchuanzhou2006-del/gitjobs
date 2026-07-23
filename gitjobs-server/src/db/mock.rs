@@ -304,6 +304,29 @@ mock! {
     }
 
     #[async_trait]
+    impl crate::db::talent::DBTalent for DB {
+        async fn create_talent_import(
+            &self,
+            talent_import: crate::db::talent::NewTalentImport,
+        ) -> Result<Uuid>;
+        async fn list_talent_import_batches(
+            &self,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::TalentImportBatchSummary>>;
+        async fn claim_talent_import_item(
+            &self,
+        ) -> Result<Option<crate::db::talent::ClaimedTalentItem>>;
+        async fn complete_talent_import_item(
+            &self,
+            item: crate::db::talent::CompletedTalentItem,
+        ) -> Result<()>;
+        async fn fail_talent_import_item(
+            &self,
+            item: crate::db::talent::FailedTalentItem,
+        ) -> Result<()>;
+    }
+
+    #[async_trait]
     impl crate::db::workers::DBWorkers for DB {
         async fn archive_expired_jobs(&self) -> Result<()>;
     }
