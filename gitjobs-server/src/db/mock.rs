@@ -324,6 +324,65 @@ mock! {
             &self,
             item: crate::db::talent::FailedTalentItem,
         ) -> Result<()>;
+        async fn list_talent_review_items(
+            &self,
+            filter: crate::db::talent::TalentReviewFilter,
+        ) -> Result<Vec<crate::db::talent::TalentReviewItemSummary>>;
+        async fn get_talent_review_item(
+            &self,
+            item_id: Uuid,
+        ) -> Result<Option<crate::db::talent::TalentReviewItem>>;
+        async fn find_talent_duplicate_candidates(
+            &self,
+            item_id: Uuid,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::TalentDuplicateCandidate>>;
+        async fn save_talent_review(
+            &self,
+            review: crate::db::talent::SaveTalentReview,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn publish_talent_item(
+            &self,
+            publication: crate::db::talent::PublishTalentItem,
+        ) -> Result<crate::db::talent::PublishOutcome>;
+        async fn merge_talent_import_item(
+            &self,
+            merge: crate::db::talent::MergeTalentImportItem,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn transition_talent_import_item(
+            &self,
+            transition: crate::db::talent::TransitionTalentImportItem,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn withdraw_talent_record(
+            &self,
+            record_id: Uuid,
+            actor_user_id: Uuid,
+            reason: Option<String>,
+        ) -> Result<bool>;
+        async fn list_published_talent_records(
+            &self,
+            kind: Option<crate::talent::TalentKind>,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::PublicTalentRecord>>;
+        async fn get_talent_runtime_settings(
+            &self,
+        ) -> Result<crate::db::talent::TalentRuntimeSettings>;
+        async fn set_talent_auto_publish(
+            &self,
+            enabled: bool,
+            actor_user_id: Uuid,
+        ) -> Result<crate::db::talent::TalentRuntimeSettings>;
+        async fn set_talent_source_status(
+            &self,
+            source_id: Uuid,
+            trust_status: crate::talent::SourceTrust,
+            actor_user_id: Uuid,
+            auto_publish_enabled: bool,
+        ) -> Result<Option<crate::db::talent::TalentSourceStatus>>;
+        async fn cleanup_talent_raw_data(
+            &self,
+            now: DateTime<Utc>,
+        ) -> Result<crate::db::talent::TalentCleanupOutcome>;
     }
 
     #[async_trait]

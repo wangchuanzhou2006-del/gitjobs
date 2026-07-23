@@ -79,6 +79,19 @@
 {{ template "talent/claim_talent_import_item.sql" }}
 {{ template "talent/complete_talent_import_item.sql" }}
 {{ template "talent/fail_talent_import_item.sql" }}
+{{ template "talent/list_talent_review_items.sql" }}
+{{ template "talent/get_talent_review_item.sql" }}
+{{ template "talent/find_talent_duplicate_candidates.sql" }}
+{{ template "talent/update_talent_review_item.sql" }}
+{{ template "talent/publish_talent_item.sql" }}
+{{ template "talent/merge_talent_import_item.sql" }}
+{{ template "talent/transition_talent_import_item.sql" }}
+{{ template "talent/withdraw_talent_record.sql" }}
+{{ template "talent/list_published_talent_records.sql" }}
+{{ template "talent/set_talent_auto_publish.sql" }}
+{{ template "talent/get_talent_runtime_settings.sql" }}
+{{ template "talent/set_talent_source_status.sql" }}
+{{ template "talent/cleanup_talent_raw_data.sql" }}
 
 {{ template "workers/archive_expired_jobs.sql" }}
 
