@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::talent::{ContactType, RiskReason, TalentKind};
+use crate::talent::{ContactType, RiskReason, TalentKind, mask_contact};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EvidenceOffset {
@@ -144,22 +144,12 @@ fn salary_candidates(fragment: &str) -> Vec<SalaryCandidate> {
         .captures_iter(fragment)
         .filter_map(|captures| {
             let whole = captures.get(0)?;
+            let first_value = captures.get(1)?.as_str();
             let first_unit = captures.get(2)?.as_str();
+            let second_value = captures.get(3)?.as_str();
             let second_unit = captures.get(4)?.as_str();
-            let shared_unit = if first_unit.is_empty() {
-                second_unit
-            } else {
-                first_unit
-            };
-            let first = parse_salary(captures.get(1)?.as_str(), shared_unit)?;
-            let second = parse_salary(
-                captures.get(3)?.as_str(),
-                if second_unit.is_empty() {
-                    shared_unit
-                } else {
-                    second_unit
-                },
-            )?;
+            let first = parse_salary_endpoint(first_value, first_unit, second_unit)?;
+            let second = parse_salary_endpoint(second_value, second_unit, first_unit)?;
             let (minimum, maximum) = if first <= second {
                 (first, second)
             } else {
@@ -185,34 +175,36 @@ fn parse_salary(value: &str, unit: &str) -> Option<u32> {
     (salary.is_finite() && salary >= 0.0 && salary <= f64::from(u32::MAX)).then(|| salary.round() as u32)
 }
 
+fn parse_salary_endpoint(value: &str, unit: &str, other_unit: &str) -> Option<u32> {
+    let numeric = value.parse::<f64>().ok()?;
+    let inferred_unit = if unit.is_empty() && !other_unit.is_empty() && numeric < 100.0 {
+        other_unit
+    } else {
+        unit
+    };
+    parse_salary(value, inferred_unit)
+}
+
 fn contact_candidates(fragment: &str) -> Vec<RuleContactCandidate> {
     let mut candidates = Vec::new();
     for captures in phone_pattern().captures_iter(fragment) {
         if let Some(value) = captures.get(1) {
-            let digits = value
-                .as_str()
-                .chars()
-                .filter(char::is_ascii_digit)
-                .collect::<String>();
-            let local = digits.strip_prefix("86").unwrap_or(&digits);
-            if local.len() == 11 {
-                candidates.push(RuleContactCandidate {
-                    contact_type: ContactType::Phone,
-                    masked_value: format!("{}****{}", &local[..3], &local[7..]),
-                    evidence: EvidenceOffset {
-                        code: "phone_candidate".to_owned(),
-                        start_byte: value.start(),
-                        end_byte: value.end(),
-                    },
-                });
-            }
+            candidates.push(RuleContactCandidate {
+                contact_type: ContactType::Phone,
+                masked_value: mask_contact(ContactType::Phone, value.as_str()),
+                evidence: EvidenceOffset {
+                    code: "phone_candidate".to_owned(),
+                    start_byte: value.start(),
+                    end_byte: value.end(),
+                },
+            });
         }
     }
     for captures in wechat_pattern().captures_iter(fragment) {
         if let Some(value) = captures.get(1) {
             candidates.push(RuleContactCandidate {
                 contact_type: ContactType::Wechat,
-                masked_value: mask_identifier(value.as_str()),
+                masked_value: mask_contact(ContactType::Wechat, value.as_str()),
                 evidence: EvidenceOffset {
                     code: "wechat_candidate".to_owned(),
                     start_byte: value.start(),
@@ -222,16 +214,6 @@ fn contact_candidates(fragment: &str) -> Vec<RuleContactCandidate> {
         }
     }
     candidates
-}
-
-fn mask_identifier(value: &str) -> String {
-    let characters = value.chars().collect::<Vec<_>>();
-    let prefix = characters.iter().take(3).collect::<String>();
-    let suffix = characters
-        .iter()
-        .skip(characters.len().saturating_sub(3))
-        .collect::<String>();
-    format!("{prefix}***{suffix}")
 }
 
 fn add_kind_evidence(fragment: &str, keywords: &[&str], code: &str, evidence: &mut Vec<EvidenceOffset>) {
@@ -334,6 +316,38 @@ mod tests {
 
         assert!(hints.salary_candidates.is_empty());
         assert!(hints.contact_candidates.is_empty());
+    }
+
+    #[test]
+    fn mixed_salary_units_preserve_each_endpoint_scale() {
+        for (fragment, expected) in [
+            ("招聘厨师，月薪6000-8k", (6_000, 8_000)),
+            ("招聘厨师，月薪6k-8000", (6_000, 8_000)),
+            ("招聘厨师，月薪6-8k", (6_000, 8_000)),
+        ] {
+            let hints = RuleEngine::default().analyze(fragment);
+
+            assert_eq!(hints.salary_candidates.len(), 1, "{fragment}");
+            assert_eq!(
+                (
+                    hints.salary_candidates[0].minimum,
+                    hints.salary_candidates[0].maximum,
+                ),
+                expected,
+                "{fragment}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_wechat_identifiers_use_canonical_non_revealing_masking() {
+        let hints = RuleEngine::default().analyze("招聘店员，微信：abc123");
+        let contact = &hints.contact_candidates[0];
+
+        assert_eq!(contact.masked_value, "***");
+        assert!(!contact.masked_value.contains("abc123"));
+        assert_eq!(contact.evidence.code, "wechat_candidate");
+        assert!(!contact.evidence.code.contains("abc123"));
     }
 
     #[test]

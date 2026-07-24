@@ -1,5 +1,5 @@
 begin;
-select plan(46);
+select plan(48);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -389,6 +389,36 @@ select throws_ok(
 select ok(
     jsonb_array_length(find_talent_duplicate_candidates(:'incompleteItemId', 20)) > 0,
     'duplicate lookup returns exact persisted fingerprint candidates'
+);
+
+select ok(
+    exists (
+        select 1
+        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 20)) candidate
+        where candidate->>'candidate_item_id' = :'gateItemId'
+          and candidate->'roles' = '["Synthetic Role"]'::jsonb
+          and candidate->>'city' = 'Test City'
+          and (candidate->>'salary_min')::integer = 1000
+          and (candidate->>'salary_max')::integer = 2000
+          and candidate->>'source_id' = :'sourceId'
+          and candidate->>'normalized_text' <> ''
+    ),
+    'duplicate lookup returns safe structured fields for non-exact candidates'
+);
+
+select ok(
+    not exists (
+        select 1
+        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 20)) candidate
+        where candidate ?| array[
+            'raw_fragment',
+            'raw_fragment_ciphertext',
+            'contact_hashes',
+            'contact_candidates_ciphertext',
+            'contacts'
+        ]
+    ),
+    'duplicate lookup never returns raw or complete contact material'
 );
 
 update talent_import_items

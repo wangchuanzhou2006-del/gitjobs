@@ -144,13 +144,7 @@ impl RiskEngine {
         } else {
             u8::try_from(score.min(100)).unwrap_or(100)
         };
-        let level = if hard_block || score >= 60 {
-            RiskLevel::High
-        } else if score >= 30 {
-            RiskLevel::Medium
-        } else {
-            RiskLevel::Low
-        };
+        let level = risk_level_for_score(score, hard_block);
         RiskAssessment {
             version: RISK_VERSION,
             score,
@@ -158,6 +152,16 @@ impl RiskEngine {
             reasons,
             hard_block,
         }
+    }
+}
+
+fn risk_level_for_score(score: u8, hard_block: bool) -> RiskLevel {
+    if hard_block || score >= 70 {
+        RiskLevel::High
+    } else if score >= 30 {
+        RiskLevel::Medium
+    } else {
+        RiskLevel::Low
     }
 }
 
@@ -338,7 +342,10 @@ mod tests {
         TalentKind, ValidatedExtraction,
     };
 
-    use super::{AutoPublishInput, AutoPublishPolicy, RISK_VERSION, RiskAssessment, RiskEngine, RiskInput};
+    use super::{
+        AutoPublishInput, AutoPublishPolicy, RISK_VERSION, RiskAssessment, RiskEngine, RiskInput,
+        risk_level_for_score,
+    };
     use crate::talent::RuleEngine;
 
     fn validated(extraction: TalentExtraction, has_contact: bool) -> ValidatedExtraction {
@@ -461,6 +468,15 @@ mod tests {
         assert_eq!(new_source.level, RiskLevel::Low);
         assert_eq!(watchlist.level, RiskLevel::Medium);
         assert!(new_source.score < watchlist.score);
+    }
+
+    #[test]
+    fn risk_level_boundaries_follow_the_global_contract() {
+        assert_eq!(risk_level_for_score(29, false), RiskLevel::Low);
+        assert_eq!(risk_level_for_score(30, false), RiskLevel::Medium);
+        assert_eq!(risk_level_for_score(69, false), RiskLevel::Medium);
+        assert_eq!(risk_level_for_score(70, false), RiskLevel::High);
+        assert_eq!(risk_level_for_score(0, true), RiskLevel::High);
     }
 
     #[test]

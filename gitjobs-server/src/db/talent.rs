@@ -331,6 +331,20 @@ pub(crate) struct TalentDuplicateCandidate {
     pub kind: TalentKind,
     pub status: String,
     pub title: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub city: Option<String>,
+    #[serde(default)]
+    pub district: Option<String>,
+    #[serde(default)]
+    pub salary_min: Option<u32>,
+    #[serde(default)]
+    pub salary_max: Option<u32>,
+    #[serde(default)]
+    pub source_id: Option<Uuid>,
+    #[serde(default)]
+    pub normalized_text: String,
     pub score: f32,
     pub reasons: Vec<String>,
     pub high_similarity: bool,
@@ -345,6 +359,13 @@ impl fmt::Debug for TalentDuplicateCandidate {
             .field("kind", &self.kind)
             .field("status", &self.status)
             .field("title", &"[REDACTED SAFE TITLE]")
+            .field("roles", &"[REDACTED SAFE ROLES]")
+            .field("city", &"[REDACTED SAFE LOCATION]")
+            .field("district", &"[REDACTED SAFE LOCATION]")
+            .field("salary_min", &self.salary_min)
+            .field("salary_max", &self.salary_max)
+            .field("source_id", &self.source_id)
+            .field("normalized_text", &"[REDACTED]")
             .field("score", &self.score)
             .field("reasons", &self.reasons)
             .field("high_similarity", &self.high_similarity)
@@ -1809,6 +1830,13 @@ mod tests {
             kind: TalentKind::Hiring,
             status: "needs_review".to_owned(),
             title: Some("Synthetic duplicate title".to_owned()),
+            roles: vec!["Synthetic Role".to_owned()],
+            city: Some("Synthetic City".to_owned()),
+            district: Some("Synthetic District".to_owned()),
+            salary_min: Some(1_000),
+            salary_max: Some(2_000),
+            source_id: Some(Uuid::new_v4()),
+            normalized_text: "synthetic duplicate title role city district".to_owned(),
             score: 1.0,
             reasons: vec!["exact_fingerprint".to_owned()],
             high_similarity: true,
@@ -1816,6 +1844,7 @@ mod tests {
 
         let debug = format!("{lookup:?}");
         assert!(!debug.contains("Synthetic duplicate title"));
+        assert!(!debug.contains("synthetic duplicate title role city district"));
 
         let persisted = DuplicateCandidate::from(lookup);
         let value = serde_json::to_value(persisted).unwrap();

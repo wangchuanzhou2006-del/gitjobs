@@ -14,34 +14,24 @@ pub(crate) const DUPLICATE_MEDIUM_THRESHOLD: f32 = 0.60;
 pub(crate) struct DuplicateProbe {
     pub extraction: ValidatedExtraction,
     pub source_id: Uuid,
-    pub normalized_text: String,
+    normalized_text: String,
+}
+
+impl DuplicateProbe {
+    pub(crate) fn new(extraction: ValidatedExtraction, source_id: Uuid) -> Self {
+        let normalized_text = normalized_text_for_extraction(&extraction.safe);
+        Self {
+            extraction,
+            source_id,
+            normalized_text,
+        }
+    }
 }
 
 impl std::fmt::Debug for DuplicateProbe {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DuplicateProbe")
-            .field("extraction", &"[REDACTED SAFE EXTRACTION]")
-            .field("source_id", &self.source_id)
-            .field("normalized_text", &"[REDACTED]")
-            .finish()
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub(crate) struct DuplicateRecord {
-    pub repository: TalentDuplicateCandidate,
-    pub extraction: TalentExtraction,
-    pub source_id: Uuid,
-    pub normalized_text: String,
-}
-
-impl std::fmt::Debug for DuplicateRecord {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("DuplicateRecord")
-            .field("candidate_item_id", &self.repository.candidate_item_id)
-            .field("candidate_record_id", &self.repository.candidate_record_id)
             .field("extraction", &"[REDACTED SAFE EXTRACTION]")
             .field("source_id", &self.source_id)
             .field("normalized_text", &"[REDACTED]")
@@ -56,7 +46,7 @@ impl DuplicateService {
     pub(crate) fn evaluate(
         &self,
         probe: DuplicateProbe,
-        candidates: Vec<DuplicateRecord>,
+        candidates: Vec<TalentDuplicateCandidate>,
     ) -> Vec<DuplicateCandidate> {
         let mut evaluated = candidates
             .into_iter()
@@ -73,9 +63,8 @@ impl DuplicateService {
     }
 }
 
-fn evaluate_candidate(probe: &DuplicateProbe, candidate: DuplicateRecord) -> DuplicateCandidate {
+fn evaluate_candidate(probe: &DuplicateProbe, candidate: TalentDuplicateCandidate) -> DuplicateCandidate {
     let exact_reason = candidate
-        .repository
         .reasons
         .iter()
         .find(|reason| matches!(reason.as_str(), "exact_contact_hash" | "exact_fingerprint"))
@@ -87,30 +76,30 @@ fn evaluate_candidate(probe: &DuplicateProbe, candidate: DuplicateRecord) -> Dup
     };
 
     DuplicateCandidate {
-        candidate_item_id: candidate.repository.candidate_item_id,
-        candidate_record_id: candidate.repository.candidate_record_id,
+        candidate_item_id: candidate.candidate_item_id,
+        candidate_record_id: candidate.candidate_record_id,
         score,
         reasons,
         high_similarity: score >= DUPLICATE_HIGH_THRESHOLD,
     }
 }
 
-fn structured_score(probe: &DuplicateProbe, candidate: &DuplicateRecord) -> (f32, Vec<String>) {
+fn structured_score(probe: &DuplicateProbe, candidate: &TalentDuplicateCandidate) -> (f32, Vec<String>) {
     let mut score = 0.0_f32;
     let mut reasons = Vec::new();
-    if roles_match(&probe.extraction.safe.roles, &candidate.extraction.roles) {
+    if roles_match(&probe.extraction.safe.roles, &candidate.roles) {
         score += 0.35;
         reasons.push("role_match".to_owned());
     }
-    if location_matches(&probe.extraction.safe, &candidate.extraction) {
+    if location_matches(&probe.extraction.safe, candidate) {
         score += 0.25;
         reasons.push("location_match".to_owned());
     }
-    if salary_overlaps(&probe.extraction.safe, &candidate.extraction) {
+    if salary_overlaps(&probe.extraction.safe, candidate) {
         score += 0.20;
         reasons.push("salary_overlap".to_owned());
     }
-    if probe.source_id == candidate.source_id {
+    if candidate.source_id == Some(probe.source_id) {
         score += 0.10;
         reasons.push("same_source".to_owned());
     }
@@ -129,7 +118,7 @@ fn roles_match(left: &[String], right: &[String]) -> bool {
         .any(|value| !value.is_empty() && right.contains(&value))
 }
 
-fn location_matches(left: &TalentExtraction, right: &TalentExtraction) -> bool {
+fn location_matches(left: &TalentExtraction, right: &TalentDuplicateCandidate) -> bool {
     optional_matches(left.city.as_deref(), right.city.as_deref())
         || optional_matches(left.district.as_deref(), right.district.as_deref())
 }
@@ -141,7 +130,7 @@ fn optional_matches(left: Option<&str>, right: Option<&str>) -> bool {
     })
 }
 
-fn salary_overlaps(left: &TalentExtraction, right: &TalentExtraction) -> bool {
+fn salary_overlaps(left: &TalentExtraction, right: &TalentDuplicateCandidate) -> bool {
     let Some((left_minimum, left_maximum)) = left.salary_min.zip(left.salary_max) else {
         return false;
     };
@@ -173,6 +162,19 @@ fn normalize(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
+fn normalized_text_for_extraction(extraction: &TalentExtraction) -> String {
+    extraction
+        .title
+        .iter()
+        .chain(extraction.roles.iter())
+        .chain(extraction.city.iter())
+        .chain(extraction.district.iter())
+        .map(|value| normalize(value))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
@@ -182,7 +184,7 @@ mod tests {
         talent::{TalentExtraction, TalentKind, ValidatedExtraction},
     };
 
-    use super::{DuplicateProbe, DuplicateRecord, DuplicateService};
+    use super::{DuplicateProbe, DuplicateService};
 
     fn validated(extraction: TalentExtraction) -> ValidatedExtraction {
         ValidatedExtraction {
@@ -204,13 +206,25 @@ mod tests {
         }
     }
 
-    fn repository_candidate(reasons: Vec<&str>) -> TalentDuplicateCandidate {
+    fn repository_candidate(
+        reasons: Vec<&str>,
+        extraction: TalentExtraction,
+        source_id: Uuid,
+        normalized_text: &str,
+    ) -> TalentDuplicateCandidate {
         TalentDuplicateCandidate {
             candidate_item_id: Some(Uuid::from_u128(1)),
             candidate_record_id: None,
             kind: TalentKind::Hiring,
             status: "needs_review".to_owned(),
             title: Some("private candidate title".to_owned()),
+            roles: extraction.roles,
+            city: extraction.city,
+            district: extraction.district,
+            salary_min: extraction.salary_min,
+            salary_max: extraction.salary_max,
+            source_id: Some(source_id),
+            normalized_text: normalized_text.to_owned(),
             score: 0.99,
             reasons: reasons.into_iter().map(str::to_owned).collect(),
             high_similarity: false,
@@ -222,23 +236,17 @@ mod tests {
         extraction: TalentExtraction,
         source_id: Uuid,
         normalized_text: &str,
-    ) -> DuplicateRecord {
-        DuplicateRecord {
-            repository: repository_candidate(reasons),
-            extraction,
-            source_id,
-            normalized_text: normalized_text.to_owned(),
-        }
+    ) -> TalentDuplicateCandidate {
+        repository_candidate(reasons, extraction, source_id, normalized_text)
     }
 
     #[test]
     fn exact_contact_and_fingerprint_markers_always_score_one() {
         let source_id = Uuid::from_u128(8);
-        let probe = DuplicateProbe {
-            extraction: validated(extraction("chef", "alpha city", "north", Some((6_000, 8_000)))),
+        let probe = DuplicateProbe::new(
+            validated(extraction("chef", "alpha city", "north", Some((6_000, 8_000)))),
             source_id,
-            normalized_text: "different text".to_owned(),
-        };
+        );
         let candidates = vec![
             record(
                 vec!["exact_contact_hash"],
@@ -264,16 +272,15 @@ mod tests {
     #[test]
     fn structured_weights_reach_medium_at_point_six() {
         let source_id = Uuid::from_u128(8);
-        let probe = DuplicateProbe {
-            extraction: validated(extraction("Chef ", "Alpha City", "North", Some((6_000, 8_000)))),
+        let probe = DuplicateProbe::new(
+            validated(extraction("Chef ", "Alpha City", "North", Some((6_000, 8_000)))),
             source_id,
-            normalized_text: "fresh recruitment text".to_owned(),
-        };
+        );
         let candidate = record(
             vec!["model_suggested_similarity"],
             extraction("chef", "alpha city", "other", Some((20_000, 30_000))),
             Uuid::from_u128(9),
-            "unrelated candidate text",
+            "unrelated",
         );
 
         let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
@@ -287,16 +294,16 @@ mod tests {
     #[test]
     fn high_threshold_is_inclusive_at_point_eight_five() {
         let source_id = Uuid::from_u128(8);
-        let probe = DuplicateProbe {
-            extraction: validated(extraction("chef", "alpha city", "north", Some((6_000, 8_000)))),
-            source_id,
-            normalized_text: "rust kitchen".to_owned(),
-        };
+        let mut probe_extraction = extraction("chef", "east", "north", Some((6_000, 8_000)));
+        probe_extraction.title = Some("alpha".to_owned());
+        let probe = DuplicateProbe::new(validated(probe_extraction), source_id);
+        let mut candidate_extraction = extraction("CHEF", "west", "north", Some((8_000, 9_000)));
+        candidate_extraction.title = Some("beta".to_owned());
         let candidate = record(
             vec![],
-            extraction("CHEF", "different city", "north", Some((8_000, 9_000))),
+            candidate_extraction,
             Uuid::from_u128(9),
-            "rust backend",
+            "beta CHEF west north",
         );
 
         let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
@@ -308,30 +315,48 @@ mod tests {
     #[test]
     fn salary_source_and_text_weights_are_deterministic_and_repository_score_is_ignored() {
         let source_id = Uuid::from_u128(8);
-        let probe = DuplicateProbe {
-            extraction: validated(extraction("chef", "alpha city", "north", Some((6_000, 8_000)))),
-            source_id,
-            normalized_text: "same normalized text".to_owned(),
-        };
+        let mut probe_extraction = extraction("chef", "alpha", "north", Some((6_000, 8_000)));
+        probe_extraction.title = Some("same normalized text".to_owned());
+        let probe = DuplicateProbe::new(validated(probe_extraction), source_id);
         let candidate = record(
             vec!["ai_score_0_99"],
-            extraction(
-                "different role",
-                "different city",
-                "different district",
-                Some((7_000, 10_000)),
-            ),
+            extraction("waiter", "beta", "south", Some((7_000, 10_000))),
             source_id,
-            "same normalized text",
+            "same normalized text waiter beta south",
         );
 
         let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
 
-        assert!((matches[0].score - 0.40).abs() < f32::EPSILON);
+        assert!((matches[0].score - 0.35).abs() < f32::EPSILON);
         assert_eq!(
             matches[0].reasons,
             vec!["salary_overlap", "same_source", "text_similarity"]
         );
         assert!(!matches[0].high_similarity);
+    }
+
+    #[test]
+    fn repository_rows_are_directly_consumable_without_private_source_material() {
+        let source_id = Uuid::from_u128(8);
+        let probe = DuplicateProbe::new(
+            validated(extraction("chef", "alpha city", "north", Some((6_000, 8_000)))),
+            source_id,
+        );
+        let row = repository_candidate(
+            vec![],
+            extraction("chef", "alpha city", "other", Some((20_000, 30_000))),
+            Uuid::from_u128(9),
+            "private candidate title chef alpha city other",
+        );
+
+        let matches = DuplicateService::default().evaluate(probe, vec![row]);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].reasons,
+            vec!["role_match", "location_match", "text_similarity"]
+        );
+        assert!(matches[0].score >= 0.60);
+        assert!(matches[0].score < 0.85);
     }
 }
