@@ -158,7 +158,7 @@ pub(crate) struct CompletedTalentItem {
     pub extraction_confidence: f32,
     pub contact_candidates_ciphertext: Option<Vec<u8>>,
     pub contact_hashes: Vec<String>,
-    pub contact_masked: Value,
+    pub contact_masked: Vec<PublicTalentContact>,
     pub normalized_fingerprint: Option<String>,
     pub validation_errors: Value,
     pub risk_score: f32,
@@ -482,9 +482,10 @@ impl TryFrom<&str> for MaskedContact {
                 && prefix.len() <= 4
                 && suffix.len() <= 4
                 && masks.len() >= 3
-                && prefix.iter().all(|character| character.is_alphanumeric())
                 && masks.iter().all(|character| *character == '*')
-                && suffix.iter().all(|character| character.is_alphanumeric())
+                && prefix.iter().chain(suffix).all(|character| {
+                    *character != '*' && !character.is_whitespace() && !character.is_control()
+                })
         });
         if !valid {
             bail!("masked talent contact must contain masking");
@@ -844,7 +845,7 @@ struct CompletedTalentItemWire<'a> {
     extraction_confidence: f32,
     contact_candidates_ciphertext: Option<String>,
     contact_hashes: &'a [String],
-    contact_masked: &'a Value,
+    contact_masked: &'a [PublicTalentContact],
     normalized_fingerprint: &'a Option<String>,
     validation_errors: &'a Value,
     risk_score: f32,
@@ -1502,7 +1503,7 @@ mod tests {
 
     use crate::talent::{
         ContactCandidate, ContactType, DuplicateCandidate, ImportItemStatus, RiskLevel, TalentExtraction,
-        TalentKind,
+        TalentKind, mask_contact,
     };
 
     use super::{
@@ -1632,7 +1633,10 @@ mod tests {
             extraction_confidence: 0.75,
             contact_candidates_ciphertext: Some(vec![1, 2, 3]),
             contact_hashes: vec!["synthetic-hash".to_owned()],
-            contact_masked: json!([{"contact_type": "wechat", "masked_value": "syn***001"}]),
+            contact_masked: vec![PublicTalentContact {
+                contact_type: ContactType::Wechat,
+                masked_value: MaskedContact::try_from("tes***_01").unwrap(),
+            }],
             normalized_fingerprint: Some("synthetic-fingerprint".to_owned()),
             validation_errors: json!([{"message": "private-validation-detail"}]),
             risk_score: 10.0,
@@ -1657,6 +1661,9 @@ mod tests {
         assert!(!debug.contains("private-risk-evidence"));
         assert!(!debug.contains("private-duplicate-detail"));
         assert!(debug.contains("[REDACTED]"));
+
+        let wire = serde_json::to_value(super::CompletedTalentItemWire::from(&completed)).unwrap();
+        assert_eq!(wire["contact_masked"][0]["masked_value"], "tes***_01");
 
         let failed = super::FailedTalentItem {
             item_id: Uuid::new_v4(),
@@ -1745,10 +1752,14 @@ mod tests {
             assert!(!deserialize_error.to_string().contains(unsafe_value));
         }
 
-        assert_eq!(
-            MaskedContact::try_from("fic***903").unwrap().as_str(),
-            "fic***903"
-        );
+        for (contact_type, raw, expected) in [
+            (ContactType::Wechat, "test_candidate_01", "tes***_01"),
+            (ContactType::Phone, "+8613800000001", "+86****0001"),
+        ] {
+            let canonical = mask_contact(contact_type, raw);
+            assert_eq!(canonical, expected);
+            assert_eq!(MaskedContact::try_from(canonical).unwrap().as_str(), expected);
+        }
     }
 
     #[test]

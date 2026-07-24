@@ -48,6 +48,10 @@ begin
     if jsonb_typeof(coalesce(p_completion->'extraction', 'null'::jsonb)) <> 'object' then
         raise exception 'talent extraction must be a JSON object' using errcode = '22023';
     end if;
+    if p_completion->'extraction' ? 'contacts' then
+        raise exception 'complete contacts are forbidden in safe talent extraction'
+            using errcode = '22023';
+    end if;
     if exists (
         select 1
         from jsonb_object_keys(p_completion->'extraction') as fields(field)
@@ -72,7 +76,6 @@ begin
                 'availability',
                 'urgency',
                 'publishedAt',
-                'contacts',
                 'missingFields',
                 'riskCandidates'
             ]
@@ -102,9 +105,8 @@ begin
                 'salaryMin', 'salaryMax', 'experienceYears', 'hoursPerDay',
                 'restDaysPerMonth', 'housingAllowance'
             ) then jsonb_typeof(value) not in ('number', 'null')
-            when field in (
-                'roles', 'skills', 'contacts', 'missingFields', 'riskCandidates'
-            ) then jsonb_typeof(value) <> 'array'
+            when field in ('roles', 'skills', 'missingFields', 'riskCandidates')
+                then jsonb_typeof(value) <> 'array'
             else true
         end
     ) then
@@ -124,31 +126,6 @@ begin
           )
     ) then
         raise exception 'talent extraction contains an invalid array entry'
-            using errcode = '22023';
-    end if;
-    if exists (
-        select 1
-        from jsonb_array_elements(
-            case
-                when jsonb_typeof(p_completion->'extraction'->'contacts') = 'array'
-                    then p_completion->'extraction'->'contacts'
-                else '[]'::jsonb
-            end
-        ) as contacts(contact)
-        where jsonb_typeof(contact) <> 'object'
-           or not (contact ?& array['contact_type', 'value'])
-           or exists (
-               select 1
-               from jsonb_object_keys(
-                   case when jsonb_typeof(contact) = 'object' then contact else '{}'::jsonb end
-               ) as keys(key)
-               where key <> all(array['contact_type', 'value'])
-           )
-           or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
-           or jsonb_typeof(contact->'value') <> 'string'
-           or coalesce(contact->>'value', '') = ''
-    ) then
-        raise exception 'talent extraction contains an invalid contact candidate'
             using errcode = '22023';
     end if;
     if exists (
@@ -243,8 +220,9 @@ begin
                where key <> all(array['contact_type', 'masked_value'])
            )
            or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
+           or char_length(coalesce(contact->>'masked_value', '')) > 64
            or coalesce(contact->>'masked_value', '')
-               !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
+               !~ '^[^*[:space:][:cntrl:]]{0,4}\*{3,}[^*[:space:][:cntrl:]]{0,4}$'
     ) then
         raise exception 'invalid masked talent completion contact' using errcode = '22023';
     end if;
@@ -391,24 +369,40 @@ begin
         raise exception 'talent completion duplicate candidates contain an invalid entry'
             using errcode = '22023';
     end if;
+    if not (
+        p_completion ?& array[
+            'item_id',
+            'extraction',
+            'extraction_confidence',
+            'contact_candidates_ciphertext',
+            'contact_hashes',
+            'contact_masked',
+            'normalized_fingerprint',
+            'validation_errors',
+            'risk_score',
+            'risk_level',
+            'risk_reasons',
+            'duplicate_candidates'
+        ]
+    ) then
+        raise exception 'talent import completion is missing required fields'
+            using errcode = '22023';
+    end if;
 
     update talent_import_items
     set
         status = 'needs_review',
-        extraction = (p_completion->'extraction') - 'contacts',
+        extraction = p_completion->'extraction',
         extraction_confidence = nullif(p_completion->>'extraction_confidence', '')::numeric,
         contact_candidates_ciphertext = nullif(p_completion->>'contact_candidates_ciphertext', ''),
-        contact_hashes = coalesce(
-            array(select jsonb_array_elements_text(coalesce(p_completion->'contact_hashes', '[]'::jsonb))),
-            '{}'::text[]
-        ),
-        contact_masked = coalesce(p_completion->'contact_masked', '[]'::jsonb),
+        contact_hashes = array(select jsonb_array_elements_text(p_completion->'contact_hashes')),
+        contact_masked = p_completion->'contact_masked',
         normalized_fingerprint = nullif(p_completion->>'normalized_fingerprint', ''),
-        validation_errors = coalesce(p_completion->'validation_errors', '[]'::jsonb),
+        validation_errors = p_completion->'validation_errors',
         risk_score = nullif(p_completion->>'risk_score', '')::numeric,
         risk_level = nullif(p_completion->>'risk_level', ''),
-        risk_reasons = coalesce(p_completion->'risk_reasons', '[]'::jsonb),
-        duplicate_candidates = coalesce(p_completion->'duplicate_candidates', '[]'::jsonb),
+        risk_reasons = p_completion->'risk_reasons',
+        duplicate_candidates = p_completion->'duplicate_candidates',
         processed_at = current_timestamp,
         updated_at = current_timestamp
     where item_id = (p_completion->>'item_id')::uuid

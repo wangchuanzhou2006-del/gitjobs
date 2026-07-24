@@ -1,5 +1,5 @@
 begin;
-select plan(27);
+select plan(30);
 
 \set sourceCreator '00000000-0000-0000-0000-000000000511'
 
@@ -328,7 +328,7 @@ select throws_ok(
     'worker completion requires complete typed duplicate candidates'
 );
 
-select lives_ok(
+select throws_ok(
     format(
         $sql$
         select complete_talent_import_item(
@@ -349,8 +349,9 @@ select lives_ok(
                 'contact_candidates_ciphertext', '161718',
                 'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
                 'contact_masked', jsonb_build_array(
-                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'syn***001')
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
                 ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
                 'validation_errors', jsonb_build_array(),
                 'risk_score', 10,
                 'risk_level', 'low',
@@ -361,7 +362,96 @@ select lives_ok(
         $sql$,
         :'first_claim'::jsonb->>'item_id'
     ),
-    'an extracting item can be completed'
+    '22023',
+    'complete contacts are forbidden in safe talent extraction',
+    'worker completion rejects plaintext contacts inside extraction'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'duplicate_candidates', jsonb_build_array()
+            ) - 'risk_reasons'
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion is missing required fields',
+    'worker completion requires persisted risk reasons'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array()
+            ) - 'duplicate_candidates'
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion is missing required fields',
+    'worker completion requires persisted duplicate candidates'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object(
+                    'kind', 'hiring',
+                    'title', 'Synthetic Rust Role'
+                ),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    'contact-free safe extraction with encrypted contacts can be completed'
 );
 
 select results_eq(
@@ -426,7 +516,17 @@ select throws_ok(
             jsonb_build_object(
                 'item_id', %L::uuid,
                 'status', 'needs_review',
-                'extraction', '{}'::jsonb
+                'extraction', '{}'::jsonb,
+                'extraction_confidence', 0.5,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 0,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
             )
         )
         $sql$,

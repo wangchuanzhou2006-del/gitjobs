@@ -166,8 +166,9 @@ begin
                   where key <> all(array['contact_type', 'masked_value'])
               )
               or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
+              or char_length(coalesce(contact->>'masked_value', '')) > 64
               or coalesce(contact->>'masked_value', '')
-                  !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
+                  !~ '^[^*[:space:][:cntrl:]]{0,4}\*{3,}[^*[:space:][:cntrl:]]{0,4}$'
        ) then
         raise exception 'invalid masked talent review contact' using errcode = '22023';
     end if;

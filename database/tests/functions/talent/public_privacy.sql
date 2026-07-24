@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(9);
 
 \set moderatorId '00000000-0000-0000-0000-000000000701'
 \set sourceId '00000000-0000-0000-0000-000000000711'
@@ -33,7 +33,7 @@ insert into talent_import_items (
 values (
     :'itemId', :'batchId', 0, '667261676d656e74', 1,
     '636f6e74616374',
-    array['fictional_complete_contact_701'],
+    array['fictional_complete_contact_701', 'synthetic-wechat-hash-701'],
     '[{"contact_type":"wechat","masked_value":"fic***701"}]'::jsonb,
     'seeking', 'needs_review',
     '{"kind":"seeking","title":"Synthetic Privacy Candidate","city":"Test City"}'::jsonb,
@@ -87,7 +87,10 @@ select * from publish_talent_item(
         'city', 'Test City',
         'published_at', current_timestamp
     ),
-    '[{"contact_type":"wechat","ciphertext":"636f6e74616374","encryption_key_version":1,"normalized_hash":"fictional_complete_contact_701","masked_value":"fic***701"}]'::jsonb
+    '[
+        {"contact_type":"phone","ciphertext":"636f6e74616374","encryption_key_version":1,"normalized_hash":"fictional_complete_contact_701","masked_value":"+86****0001"},
+        {"contact_type":"wechat","ciphertext":"776563686174","encryption_key_version":1,"normalized_hash":"synthetic-wechat-hash-701","masked_value":"tes***_01"}
+    ]'::jsonb
 )
 \gset published_
 
@@ -110,8 +113,14 @@ values (
 
 select like(
     list_published_talent_records(null, 50)::text,
-    '%fic***701%',
-    'public records include masked contact display'
+    '%+86****0001%',
+    'public records include canonical international phone masking'
+);
+
+select like(
+    list_published_talent_records(null, 50)::text,
+    '%tes***_01%',
+    'public records include canonical WeChat underscore masking'
 );
 
 select unlike(

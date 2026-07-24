@@ -341,14 +341,16 @@ begin
            or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
            or coalesce(contact->>'ciphertext', '') !~ '^(?:[0-9a-fA-F]{2})+$'
            or coalesce(nullif(contact->>'encryption_key_version', '')::integer, 0) < 1
+           or char_length(coalesce(contact->>'masked_value', '')) > 64
            or coalesce(contact->>'masked_value', '')
-               !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
+               !~ '^[^*[:space:][:cntrl:]]{0,4}\*{3,}[^*[:space:][:cntrl:]]{0,4}$'
     ) then
         if exists (
             select 1
             from jsonb_array_elements(p_contacts) as masked_contacts(contact)
-            where coalesce(contact->>'masked_value', '')
-                !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
+            where char_length(coalesce(contact->>'masked_value', '')) > 64
+               or coalesce(contact->>'masked_value', '')
+                   !~ '^[^*[:space:][:cntrl:]]{0,4}\*{3,}[^*[:space:][:cntrl:]]{0,4}$'
         ) then
             raise exception 'invalid masked talent publication contact' using errcode = '22023';
         end if;
