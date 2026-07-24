@@ -69,6 +69,8 @@ returns jsonb as $$
                     from talent_contacts c
                     where c.record_id = r.record_id
                       and c.deleted_at is null
+                      and c.masked_value
+                          ~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
                 ),
                 '[]'::jsonb
             ) as contact_masked

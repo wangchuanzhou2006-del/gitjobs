@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(27);
 
 \set sourceCreator '00000000-0000-0000-0000-000000000511'
 
@@ -190,6 +190,142 @@ select throws_ok(
     '22023',
     'talent import completion can only require review',
     'worker completion cannot bypass automatic publication policy'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'raw_fragment_ciphertext', 'fictional-private-fragment'
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion contains an unknown field',
+    'worker completion rejects unknown raw or contact-bearing root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'extraction_confidence', '0.95'
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'invalid talent extraction confidence',
+    'worker completion rejects incorrectly typed numeric root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'contact_hashes', jsonb_build_object('hash', 'synthetic')
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion contact hashes must be a JSON array',
+    'worker completion rejects incorrectly typed array root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object(
+                    'raw_fragment_ciphertext', 'fictional-private-fragment'
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent extraction contains an unknown field',
+    'worker completion rejects unknown raw or contact-bearing extraction fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object(
+                        'contact_type', 'wechat',
+                        'masked_value', 'fictionalCompleteWechat001'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'invalid masked talent completion contact',
+    'worker completion rejects an unmasked complete contact'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'risk_reasons', jsonb_build_array(
+                    jsonb_build_object('hard_block', false)
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion risk reasons contain an invalid entry',
+    'worker completion requires complete typed risk reasons'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'duplicate_candidates', jsonb_build_array(
+                    jsonb_build_object('score', 0.5, 'high_similarity', false)
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion duplicate candidates contain an invalid entry',
+    'worker completion requires complete typed duplicate candidates'
 );
 
 select lives_ok(

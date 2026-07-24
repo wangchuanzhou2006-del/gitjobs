@@ -1,10 +1,12 @@
 begin;
-select plan(8);
+select plan(9);
 
 \set sourceId '00000000-0000-0000-0000-000000000811'
 \set batchId '00000000-0000-0000-0000-000000000821'
 \set itemId '00000000-0000-0000-0000-000000000831'
 \set recordId '00000000-0000-0000-0000-000000000841'
+\set cappedBatchId '00000000-0000-0000-0000-000000000822'
+\set cappedItemId '00000000-0000-0000-0000-000000000832'
 
 insert into talent_sources (source_id, source_type, name)
 values (:'sourceId', 'other', 'Synthetic Cleanup Source');
@@ -53,6 +55,24 @@ values (
     '{"kind":"hiring","title":"Preserved Cleanup Record"}'::jsonb
 );
 
+insert into talent_import_batches (
+    batch_id, source_id, raw_text_ciphertext, encryption_key_version, status,
+    item_count, processed_count, created_at, raw_delete_after
+)
+values (
+    :'cappedBatchId', :'sourceId', '6c6174652d646561646c696e65', 1, 'completed',
+    1, 1, current_timestamp - interval '91 days', current_timestamp + interval '30 days'
+);
+
+insert into talent_import_items (
+    item_id, batch_id, position, raw_fragment_ciphertext, encryption_key_version,
+    contact_candidates_ciphertext, kind, status, created_at
+)
+values (
+    :'cappedItemId', :'cappedBatchId', 0, '6c6174652d667261676d656e74', 1,
+    '6c6174652d636f6e74616374', 'hiring', 'failed', current_timestamp - interval '91 days'
+);
+
 select lives_ok(
     $$select cleanup_talent_raw_data(current_timestamp)$$,
     'cleanup accepts an explicit clock'
@@ -62,6 +82,12 @@ select is(
     (select raw_text_ciphertext from talent_import_batches where batch_id = :'batchId'),
     null::text,
     'cleanup nulls old batch ciphertext'
+);
+
+select is(
+    (select raw_text_ciphertext from talent_import_batches where batch_id = :'cappedBatchId'),
+    null::text,
+    'cleanup enforces the ninety-day cap despite a later explicit deadline'
 );
 
 select is(

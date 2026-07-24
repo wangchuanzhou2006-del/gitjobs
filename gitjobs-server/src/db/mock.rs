@@ -357,7 +357,7 @@ mock! {
             &self,
             record_id: Uuid,
             actor_user_id: Uuid,
-            reason: Option<String>,
+            reason: Option<crate::db::talent::AuditReason>,
         ) -> Result<bool>;
         async fn list_published_talent_records(
             &self,

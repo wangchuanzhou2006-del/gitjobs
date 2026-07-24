@@ -14,7 +14,8 @@ use uuid::Uuid;
 use crate::{
     PgDB,
     talent::{
-        ContactType, ImportItemStatus, RiskLevel, SourceTrust, SourceType, TalentExtraction, TalentKind,
+        ContactType, DuplicateCandidate, ImportItemStatus, RiskLevel, SourceTrust, SourceType,
+        TalentExtraction, TalentKind,
     },
 };
 
@@ -163,7 +164,7 @@ pub(crate) struct CompletedTalentItem {
     pub risk_score: f32,
     pub risk_level: RiskLevel,
     pub risk_reasons: Value,
-    pub duplicate_candidates: Value,
+    pub duplicate_candidates: Vec<DuplicateCandidate>,
 }
 
 impl fmt::Debug for CompletedTalentItem {
@@ -323,7 +324,7 @@ impl fmt::Debug for TalentReviewItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct TalentDuplicateCandidate {
     pub candidate_item_id: Option<Uuid>,
     pub candidate_record_id: Option<Uuid>,
@@ -335,6 +336,34 @@ pub(crate) struct TalentDuplicateCandidate {
     pub high_similarity: bool,
 }
 
+impl fmt::Debug for TalentDuplicateCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TalentDuplicateCandidate")
+            .field("candidate_item_id", &self.candidate_item_id)
+            .field("candidate_record_id", &self.candidate_record_id)
+            .field("kind", &self.kind)
+            .field("status", &self.status)
+            .field("title", &"[REDACTED SAFE TITLE]")
+            .field("score", &self.score)
+            .field("reasons", &self.reasons)
+            .field("high_similarity", &self.high_similarity)
+            .finish()
+    }
+}
+
+impl From<TalentDuplicateCandidate> for DuplicateCandidate {
+    fn from(candidate: TalentDuplicateCandidate) -> Self {
+        Self {
+            candidate_item_id: candidate.candidate_item_id,
+            candidate_record_id: candidate.candidate_record_id,
+            score: candidate.score,
+            reasons: candidate.reasons,
+            high_similarity: candidate.high_similarity,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub(crate) struct SaveTalentReview {
     pub item_id: Uuid,
@@ -343,12 +372,12 @@ pub(crate) struct SaveTalentReview {
     pub kind: Option<TalentKind>,
     pub extraction: Option<SafeTalentExtraction>,
     pub extraction_confidence: Option<f32>,
-    pub contact_masked: Option<Value>,
+    pub contact_masked: Option<Vec<PublicTalentContact>>,
     pub validation_errors: Option<Value>,
     pub risk_score: Option<f32>,
     pub risk_level: Option<RiskLevel>,
     pub risk_reasons: Option<Value>,
-    pub duplicate_candidates: Option<Value>,
+    pub duplicate_candidates: Option<Vec<DuplicateCandidate>>,
 }
 
 impl fmt::Debug for SaveTalentReview {
@@ -430,12 +459,151 @@ impl fmt::Debug for TalentRecordDraft {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub(crate) struct MaskedContact(String);
+
+impl MaskedContact {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<&str> for MaskedContact {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        let characters = value.chars().collect::<Vec<_>>();
+        let first_mask = characters.iter().position(|character| *character == '*');
+        let last_mask = characters.iter().rposition(|character| *character == '*');
+        let valid = first_mask.zip(last_mask).is_some_and(|(first, last)| {
+            let prefix = &characters[..first];
+            let masks = &characters[first..=last];
+            let suffix = &characters[last + 1..];
+            characters.len() <= 64
+                && prefix.len() <= 4
+                && suffix.len() <= 4
+                && masks.len() >= 3
+                && prefix.iter().all(|character| character.is_alphanumeric())
+                && masks.iter().all(|character| *character == '*')
+                && suffix.iter().all(|character| character.is_alphanumeric())
+        });
+        if !valid {
+            bail!("masked talent contact must contain masking");
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
+impl TryFrom<String> for MaskedContact {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::try_from(value.as_str())?;
+        Ok(Self(value))
+    }
+}
+
+impl Serialize for MaskedContact {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MaskedContact {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Debug for MaskedContact {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED MASKED CONTACT]")
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuditReason {
+    Duplicate,
+    Rejected,
+    Reprocess,
+    Withdrawn,
+    ModeratorCorrection,
+    PolicyViolation,
+    Expired,
+    Other,
+}
+
+impl AuditReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Duplicate => "duplicate",
+            Self::Rejected => "rejected",
+            Self::Reprocess => "reprocess",
+            Self::Withdrawn => "withdrawn",
+            Self::ModeratorCorrection => "moderator_correction",
+            Self::PolicyViolation => "policy_violation",
+            Self::Expired => "expired",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl TryFrom<&str> for AuditReason {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        match value {
+            "duplicate" => Ok(Self::Duplicate),
+            "rejected" => Ok(Self::Rejected),
+            "reprocess" => Ok(Self::Reprocess),
+            "withdrawn" => Ok(Self::Withdrawn),
+            "moderator_correction" => Ok(Self::ModeratorCorrection),
+            "policy_violation" => Ok(Self::PolicyViolation),
+            "expired" => Ok(Self::Expired),
+            "other" => Ok(Self::Other),
+            _ => bail!("invalid talent audit reason"),
+        }
+    }
+}
+
+impl Serialize for AuditReason {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AuditReason {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value.as_str()).map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Debug for AuditReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED SAFE AUDIT REASON]")
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct EncryptedTalentContact {
     pub contact_type: ContactType,
     pub ciphertext: Vec<u8>,
     pub encryption_key_version: u32,
     pub normalized_hash: Option<String>,
-    pub masked_value: String,
+    pub masked_value: MaskedContact,
 }
 
 impl fmt::Debug for EncryptedTalentContact {
@@ -487,7 +655,7 @@ pub(crate) struct MergeTalentImportItem {
     pub lock_version: u32,
     pub target_record_id: Uuid,
     pub actor_user_id: Uuid,
-    pub reason: Option<String>,
+    pub reason: Option<AuditReason>,
 }
 
 impl fmt::Debug for MergeTalentImportItem {
@@ -509,7 +677,7 @@ pub(crate) struct TransitionTalentImportItem {
     pub lock_version: u32,
     pub next_status: ImportItemStatus,
     pub actor_user_id: Uuid,
-    pub reason: Option<String>,
+    pub reason: Option<AuditReason>,
 }
 
 impl fmt::Debug for TransitionTalentImportItem {
@@ -528,7 +696,7 @@ impl fmt::Debug for TransitionTalentImportItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PublicTalentContact {
     pub contact_type: ContactType,
-    pub masked_value: String,
+    pub masked_value: MaskedContact,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -682,7 +850,7 @@ struct CompletedTalentItemWire<'a> {
     risk_score: f32,
     risk_level: RiskLevel,
     risk_reasons: &'a Value,
-    duplicate_candidates: &'a Value,
+    duplicate_candidates: &'a [DuplicateCandidate],
 }
 
 impl<'a> From<&'a CompletedTalentItem> for CompletedTalentItemWire<'a> {
@@ -786,29 +954,38 @@ impl TalentReviewItemWire {
 
 #[derive(Serialize)]
 struct SaveTalentReviewWire<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<TalentKind>,
-    extraction: &'a Option<SafeTalentExtraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extraction: Option<&'a SafeTalentExtraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     extraction_confidence: Option<f32>,
-    contact_masked: &'a Option<Value>,
-    validation_errors: &'a Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contact_masked: Option<&'a Vec<PublicTalentContact>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_errors: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     risk_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     risk_level: Option<RiskLevel>,
-    risk_reasons: &'a Option<Value>,
-    duplicate_candidates: &'a Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    risk_reasons: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duplicate_candidates: Option<&'a Vec<DuplicateCandidate>>,
 }
 
 impl<'a> From<&'a SaveTalentReview> for SaveTalentReviewWire<'a> {
     fn from(review: &'a SaveTalentReview) -> Self {
         Self {
             kind: review.kind,
-            extraction: &review.extraction,
+            extraction: review.extraction.as_ref(),
             extraction_confidence: review.extraction_confidence,
-            contact_masked: &review.contact_masked,
-            validation_errors: &review.validation_errors,
+            contact_masked: review.contact_masked.as_ref(),
+            validation_errors: review.validation_errors.as_ref(),
             risk_score: review.risk_score,
             risk_level: review.risk_level,
-            risk_reasons: &review.risk_reasons,
-            duplicate_candidates: &review.duplicate_candidates,
+            risk_reasons: review.risk_reasons.as_ref(),
+            duplicate_candidates: review.duplicate_candidates.as_ref(),
         }
     }
 }
@@ -829,7 +1006,7 @@ impl<'a> From<&'a EncryptedTalentContact> for EncryptedTalentContactWire<'a> {
             ciphertext: hex_encode(&contact.ciphertext),
             encryption_key_version: contact.encryption_key_version,
             normalized_hash: &contact.normalized_hash,
-            masked_value: &contact.masked_value,
+            masked_value: contact.masked_value.as_str(),
         }
     }
 }
@@ -862,7 +1039,7 @@ pub(crate) trait DBTalent {
         &self,
         record_id: Uuid,
         actor_user_id: Uuid,
-        reason: Option<String>,
+        reason: Option<AuditReason>,
     ) -> Result<bool>;
     async fn list_published_talent_records(
         &self,
@@ -1076,6 +1253,7 @@ impl DBTalent for PgDB {
     #[instrument(skip(self, merge), err)]
     async fn merge_talent_import_item(&self, merge: MergeTalentImportItem) -> Result<SaveReviewOutcome> {
         trace!("db: merge talent import item");
+        let reason = merge.reason.map(AuditReason::as_str);
         let db = self.pool.get().await?;
         let row = db
             .query_one(
@@ -1089,7 +1267,7 @@ impl DBTalent for PgDB {
                     &i32::try_from(merge.lock_version)?,
                     &merge.target_record_id,
                     &merge.actor_user_id,
-                    &merge.reason,
+                    &reason,
                 ],
             )
             .await?;
@@ -1108,6 +1286,7 @@ impl DBTalent for PgDB {
         transition: TransitionTalentImportItem,
     ) -> Result<SaveReviewOutcome> {
         trace!("db: transition talent import item");
+        let reason = transition.reason.map(AuditReason::as_str);
         let db = self.pool.get().await?;
         let row = db
             .query_one(
@@ -1121,7 +1300,7 @@ impl DBTalent for PgDB {
                     &i32::try_from(transition.lock_version)?,
                     &import_item_status_name(transition.next_status),
                     &transition.actor_user_id,
-                    &transition.reason,
+                    &reason,
                 ],
             )
             .await?;
@@ -1139,9 +1318,10 @@ impl DBTalent for PgDB {
         &self,
         record_id: Uuid,
         actor_user_id: Uuid,
-        reason: Option<String>,
+        reason: Option<AuditReason>,
     ) -> Result<bool> {
         trace!("db: withdraw talent record");
+        let reason = reason.map(AuditReason::as_str);
         let db = self.pool.get().await?;
         let row = db
             .query_one(
@@ -1321,13 +1501,15 @@ mod tests {
     use uuid::Uuid;
 
     use crate::talent::{
-        ContactCandidate, ContactType, ImportItemStatus, RiskLevel, TalentExtraction, TalentKind,
+        ContactCandidate, ContactType, DuplicateCandidate, ImportItemStatus, RiskLevel, TalentExtraction,
+        TalentKind,
     };
 
     use super::{
-        ClaimedTalentItemWire, EncryptedTalentContact, NewTalentImport, NewTalentImportItem,
-        NewTalentImportWire, PublicTalentContact, PublicTalentRecord, SafeTalentExtraction,
-        SaveReviewOutcome,
+        AuditReason, ClaimedTalentItemWire, EncryptedTalentContact, MaskedContact, NewTalentImport,
+        NewTalentImportItem, NewTalentImportWire, PublicTalentContact, PublicTalentRecord,
+        SafeTalentExtraction, SaveReviewOutcome, SaveTalentReview, SaveTalentReviewWire,
+        TalentDuplicateCandidate,
     };
 
     fn new_import(items: Vec<NewTalentImportItem>) -> NewTalentImport {
@@ -1456,7 +1638,13 @@ mod tests {
             risk_score: 10.0,
             risk_level: RiskLevel::Low,
             risk_reasons: json!([{"evidence": "private-risk-evidence"}]),
-            duplicate_candidates: json!([{"reason": "private-duplicate-detail"}]),
+            duplicate_candidates: vec![DuplicateCandidate {
+                candidate_item_id: Some(Uuid::new_v4()),
+                candidate_record_id: None,
+                score: 1.0,
+                reasons: vec!["private-duplicate-detail".to_owned()],
+                high_similarity: true,
+            }],
         };
 
         let debug = format!("{completed:?}");
@@ -1484,7 +1672,7 @@ mod tests {
             ciphertext: vec![1, 2, 3],
             encryption_key_version: 1,
             normalized_hash: Some("fictional_complete_contact_901".to_owned()),
-            masked_value: "fic***901".to_owned(),
+            masked_value: MaskedContact::try_from("fic***901").unwrap(),
         };
 
         let debug = format!("{contact:?}");
@@ -1521,7 +1709,7 @@ mod tests {
             expires_at: None,
             contact_masked: vec![PublicTalentContact {
                 contact_type: ContactType::Wechat,
-                masked_value: "fic***902".to_owned(),
+                masked_value: MaskedContact::try_from("fic***902").unwrap(),
             }],
         };
 
@@ -1543,5 +1731,93 @@ mod tests {
     #[test]
     fn stale_review_has_a_typed_conflict_outcome() {
         assert_eq!(SaveReviewOutcome::Conflict, SaveReviewOutcome::Conflict);
+    }
+
+    #[test]
+    fn masked_contact_boundary_rejects_plausible_complete_contacts() {
+        for unsafe_value in ["13800138000", "fictionalCompleteWechat903"] {
+            let error = MaskedContact::try_from(unsafe_value).unwrap_err();
+            assert_eq!(error.to_string(), "masked talent contact must contain masking");
+            assert!(!error.to_string().contains(unsafe_value));
+
+            let deserialize_error =
+                serde_json::from_str::<MaskedContact>(&format!("\"{unsafe_value}\"")).unwrap_err();
+            assert!(!deserialize_error.to_string().contains(unsafe_value));
+        }
+
+        assert_eq!(
+            MaskedContact::try_from("fic***903").unwrap().as_str(),
+            "fic***903"
+        );
+    }
+
+    #[test]
+    fn audit_reason_boundary_accepts_codes_and_rejects_caller_text() {
+        assert_eq!(
+            AuditReason::try_from("withdrawn").unwrap(),
+            AuditReason::Withdrawn
+        );
+
+        let unsafe_value = "fictional_complete_contact_904";
+        let error = AuditReason::try_from(unsafe_value).unwrap_err();
+        assert_eq!(error.to_string(), "invalid talent audit reason");
+        assert!(!error.to_string().contains(unsafe_value));
+
+        let deserialize_error =
+            serde_json::from_str::<AuditReason>(&format!("\"{unsafe_value}\"")).unwrap_err();
+        assert!(!deserialize_error.to_string().contains(unsafe_value));
+    }
+
+    #[test]
+    fn partial_review_wire_omits_fields_that_were_not_updated() {
+        let review = SaveTalentReview {
+            item_id: Uuid::new_v4(),
+            lock_version: 0,
+            actor_user_id: Uuid::new_v4(),
+            kind: None,
+            extraction: None,
+            extraction_confidence: None,
+            contact_masked: None,
+            validation_errors: None,
+            risk_score: None,
+            risk_level: None,
+            risk_reasons: None,
+            duplicate_candidates: None,
+        };
+
+        let value = serde_json::to_value(SaveTalentReviewWire::from(&review)).unwrap();
+
+        assert_eq!(value, json!({}));
+    }
+
+    #[test]
+    fn duplicate_lookup_candidate_maps_to_exact_persistence_schema() {
+        let lookup = TalentDuplicateCandidate {
+            candidate_item_id: Some(Uuid::new_v4()),
+            candidate_record_id: None,
+            kind: TalentKind::Hiring,
+            status: "needs_review".to_owned(),
+            title: Some("Synthetic duplicate title".to_owned()),
+            score: 1.0,
+            reasons: vec!["exact_fingerprint".to_owned()],
+            high_similarity: true,
+        };
+
+        let debug = format!("{lookup:?}");
+        assert!(!debug.contains("Synthetic duplicate title"));
+
+        let persisted = DuplicateCandidate::from(lookup);
+        let value = serde_json::to_value(persisted).unwrap();
+        let fields = value.as_object().unwrap();
+
+        assert_eq!(fields.len(), 5);
+        assert!(fields.contains_key("candidate_item_id"));
+        assert!(fields.contains_key("candidate_record_id"));
+        assert!(fields.contains_key("score"));
+        assert!(fields.contains_key("reasons"));
+        assert!(fields.contains_key("high_similarity"));
+        assert!(!fields.contains_key("kind"));
+        assert!(!fields.contains_key("status"));
+        assert!(!fields.contains_key("title"));
     }
 }

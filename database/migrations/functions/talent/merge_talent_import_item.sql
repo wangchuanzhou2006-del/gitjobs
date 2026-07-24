@@ -10,6 +10,20 @@ returns boolean as $$
 declare
     v_item talent_import_items%rowtype;
 begin
+    if p_reason is not null
+       and p_reason not in (
+           'duplicate',
+           'rejected',
+           'reprocess',
+           'withdrawn',
+           'moderator_correction',
+           'policy_violation',
+           'expired',
+           'other'
+       ) then
+        raise exception 'invalid talent audit reason' using errcode = '22023';
+    end if;
+
     select *
     into v_item
     from talent_import_items
@@ -40,8 +54,11 @@ begin
         duplicate_candidates = coalesce(duplicate_candidates, '[]'::jsonb)
             || jsonb_build_array(
                 jsonb_build_object(
+                    'candidate_item_id', null,
                     'candidate_record_id', p_target_record_id,
-                    'merge_target', true
+                    'score', 1,
+                    'reasons', jsonb_build_array('moderator_merge'),
+                    'high_similarity', true
                 )
             ),
         lock_version = lock_version + 1,

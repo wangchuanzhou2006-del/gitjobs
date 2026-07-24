@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(46);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -12,6 +12,7 @@ select plan(26);
 \set rollbackItemId '00000000-0000-0000-0000-000000000635'
 \set autoItemId '00000000-0000-0000-0000-000000000636'
 \set incompleteItemId '00000000-0000-0000-0000-000000000637'
+\set gateItemId '00000000-0000-0000-0000-000000000638'
 \set targetRecordId '00000000-0000-0000-0000-000000000641'
 
 insert into "user" (auth_hash, email, name, user_id, username)
@@ -56,8 +57,8 @@ values (
     '616263',
     1,
     'completed',
-    7,
-    7
+    8,
+    8
 );
 
 insert into talent_import_items (
@@ -97,9 +98,9 @@ values
         '[{"contact_type":"wechat","masked_value":"ris***602"}]'::jsonb,
         'synthetic-fingerprint-602',
         'hiring', 'needs_review',
-        '{"kind":"hiring","title":"High Risk Role","city":"Test City","salaryMin":1000,"salaryMax":2000,"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
+        '{"kind":"hiring","title":"High Risk Role","city":"Test City","salaryMin":1000,"salaryMax":2000,"roles":["Synthetic Role"],"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
         0.99, '[]'::jsonb, 90, 'high',
-        '[{"code":"synthetic_hard_block","hard_block":true}]'::jsonb,
+        '[{"code":"synthetic_hard_block","explanation":"Synthetic hard block","evidence":null,"hard_block":true}]'::jsonb,
         '[]'::jsonb, current_timestamp
     ),
     (
@@ -130,7 +131,7 @@ values
         '[{"contact_type":"wechat","masked_value":"aut***606"}]'::jsonb,
         'synthetic-fingerprint-606',
         'seeking', 'needs_review',
-        '{"kind":"seeking","title":"Automatic Candidate","city":"Test City","publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
+        '{"kind":"seeking","title":"Automatic Candidate","city":"Test City","roles":["Synthetic Role"],"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
         0.96, '[]'::jsonb, 5, 'low', '[]'::jsonb, '[]'::jsonb, current_timestamp
     ),
     (
@@ -141,6 +142,15 @@ values
         'hiring', 'needs_review',
         '{"kind":"hiring","title":null,"city":null,"salaryMin":null,"salaryMax":null,"publishedAt":null,"missingFields":["title","city","salaryMin","salaryMax","publishedAt"]}'::jsonb,
         0.97, '[]'::jsonb, 5, 'low', '[]'::jsonb, '[]'::jsonb, current_timestamp
+    ),
+    (
+        :'gateItemId', :'batchId', 7, '7373', 1, '7474',
+        array['synthetic-gate-hash'],
+        '[{"contact_type":"wechat","masked_value":"gat***608"}]'::jsonb,
+        'synthetic-fingerprint-608',
+        'hiring', 'needs_review',
+        '{"kind":"hiring","title":"Gate Role","city":"Test City","salaryMin":1000,"salaryMax":2000,"roles":["Synthetic Role"],"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
+        0.96, '[]'::jsonb, 5, 'low', '[]'::jsonb, '[]'::jsonb, current_timestamp
     );
 
 insert into talent_records (
@@ -171,7 +181,7 @@ select ok(
 
 select is(
     jsonb_array_length(list_talent_review_items('{}'::text[], null, 50)),
-    7,
+    8,
     'an empty state filter returns all review items'
 );
 
@@ -205,6 +215,78 @@ select throws_ok(
     '22023',
     'talent review risk reasons must be a JSON array',
     'review updates reject malformed risk safety data'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select * from update_talent_review_item(
+            %L::uuid,
+            0,
+            '{"risk_reasons":[{"hard_block":false}]}'::jsonb,
+            %L::uuid
+        )
+        $sql$,
+        :'incompleteItemId',
+        :'moderatorId'
+    ),
+    '22023',
+    'talent review risk reasons contain an invalid entry',
+    'review updates require complete typed risk reasons'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select * from update_talent_review_item(
+            %L::uuid,
+            0,
+            '{"risk_reasons":null}'::jsonb,
+            %L::uuid
+        )
+        $sql$,
+        :'incompleteItemId',
+        :'moderatorId'
+    ),
+    '22023',
+    'talent review risk reasons must be a JSON array',
+    'review updates reject null risk safety data'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select * from update_talent_review_item(
+            %L::uuid,
+            0,
+            '{"duplicate_candidates":[{"score":0.5,"high_similarity":false}]}'::jsonb,
+            %L::uuid
+        )
+        $sql$,
+        :'incompleteItemId',
+        :'moderatorId'
+    ),
+    '22023',
+    'talent review duplicate candidates contain an invalid entry',
+    'review updates require complete typed duplicate candidates'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select * from update_talent_review_item(
+            %L::uuid,
+            0,
+            '{"extraction":{"raw_fragment_ciphertext":"fictional-private-fragment"}}'::jsonb,
+            %L::uuid
+        )
+        $sql$,
+        :'incompleteItemId',
+        :'moderatorId'
+    ),
+    '22023',
+    'talent review extraction contains an unknown field',
+    'review updates reject unknown raw or contact-bearing extraction fields'
 );
 
 select * from publish_talent_item(
@@ -309,6 +391,230 @@ select ok(
     'duplicate lookup returns exact persisted fingerprint candidates'
 );
 
+update talent_import_items
+set extraction = jsonb_set(extraction, '{roles}', '[]'::jsonb)
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'automatic publication requires a nonempty persisted roles array'
+);
+
+update talent_import_items
+set extraction = jsonb_set(extraction, '{roles}', '{"role":"Synthetic Role"}'::jsonb)
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'malformed persisted roles fail closed without an array-length error'
+);
+
+update talent_import_items
+set extraction = jsonb_set(extraction, '{roles}', '["Synthetic Role"]'::jsonb)
+where item_id = :'gateItemId';
+
+update talent_import_items
+set validation_errors = '{"code":"synthetic_malformed"}'::jsonb
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'malformed persisted validation errors fail closed without an array-length error'
+);
+
+update talent_import_items
+set
+    validation_errors = '[]'::jsonb,
+    extraction = jsonb_set(extraction, '{missingFields}', '{"field":"title"}'::jsonb)
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'malformed persisted missing fields fail closed without an array-length error'
+);
+
+update talent_import_items
+set extraction = jsonb_set(extraction, '{missingFields}', '[]'::jsonb)
+where item_id = :'gateItemId';
+
+update talent_import_items set risk_reasons = null where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'automatic publication fails closed when persisted risk reasons are null'
+);
+
+update talent_import_items
+set risk_reasons = '{"code":"synthetic","explanation":"malformed","evidence":null,"hard_block":false}'::jsonb
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'automatic publication rejects malformed risk safety data'
+);
+
+update talent_import_items
+set risk_reasons = '[]'::jsonb, duplicate_candidates = null
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'automatic publication fails closed when duplicate safety data is null'
+);
+
+update talent_import_items
+set duplicate_candidates = '[{"score":0.5,"high_similarity":false}]'::jsonb
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'automatic publication rejects incomplete duplicate safety entries'
+);
+
+update talent_import_items set duplicate_candidates = '[]'::jsonb where item_id = :'gateItemId';
+select * from set_talent_auto_publish(false, :'moderatorId') \gset paused_global_
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'global pause blocks automatic publication'
+);
+
+select * from set_talent_auto_publish(true, :'moderatorId') \gset resumed_global_
+update talent_sources set auto_publish_enabled = false where source_id = :'sourceId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'source pause blocks automatic publication'
+);
+
+update talent_sources set auto_publish_enabled = true, confirmed_by = null, confirmed_at = null
+where source_id = :'sourceId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'unconfirmed source blocks automatic publication'
+);
+
+update talent_sources set confirmed_by = :'moderatorId', confirmed_at = current_timestamp
+where source_id = :'sourceId';
+update talent_import_items set extraction_confidence = 0.89 where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'confidence below threshold blocks automatic publication'
+);
+
+update talent_import_items
+set
+    extraction_confidence = 0.96,
+    duplicate_candidates = '[{"candidate_item_id":"00000000-0000-0000-0000-000000000632","candidate_record_id":null,"score":0.90,"reasons":["synthetic_match"],"high_similarity":true}]'::jsonb
+where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'automatic talent publication gates failed',
+    'high-similarity duplicate blocks automatic publication'
+);
+
+update talent_import_items set duplicate_candidates = '[]'::jsonb where item_id = :'gateItemId';
+
+select throws_ok(
+    format(
+        $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"fictionalCompleteWechat608"}]'::jsonb)$$,
+        :'gateItemId'
+    ),
+    '22023',
+    'invalid masked talent publication contact',
+    'unmasked contact display cannot enter publication'
+);
+
+select throws_ok(
+    format(
+        $$select merge_talent_import_item(%L::uuid, 0, %L::uuid, %L::uuid, 'fictional_complete_contact_608')$$,
+        :'gateItemId',
+        :'targetRecordId',
+        :'moderatorId'
+    ),
+    '22023',
+    'invalid talent audit reason',
+    'merge audit reason rejects a plausible complete contact'
+);
+
+select throws_ok(
+    format(
+        $$select transition_talent_import_item(%L::uuid, 0, 'extracting', %L::uuid, 'fictional_complete_contact_609')$$,
+        :'rejectedItemId',
+        :'moderatorId'
+    ),
+    '22023',
+    'invalid talent audit reason',
+    'transition audit reason rejects a plausible complete contact'
+);
+
 select is(
     (select count(*) from talent_contacts where record_id = :'first_publish_record_id'),
     1::bigint,
@@ -371,7 +677,7 @@ select throws_ok(
 
 select lives_ok(
     format(
-        $$select merge_talent_import_item(%L::uuid, 0, %L::uuid, %L::uuid, 'synthetic duplicate')$$,
+        $$select merge_talent_import_item(%L::uuid, 0, %L::uuid, %L::uuid, 'duplicate')$$,
         :'mergedItemId',
         :'targetRecordId',
         :'moderatorId'
@@ -385,9 +691,19 @@ select results_eq(
         i.status,
         e.record_id,
         e.action,
-        jsonb_path_exists(
-            i.duplicate_candidates,
-            '$[*] ? (@.candidate_record_id == "00000000-0000-0000-0000-000000000641" && @.merge_target == true)'
+        (
+            jsonb_array_length(i.duplicate_candidates) = 1
+            and i.duplicate_candidates->0->'candidate_item_id' = 'null'::jsonb
+            and i.duplicate_candidates->0->>'candidate_record_id'
+                = '00000000-0000-0000-0000-000000000641'
+            and (i.duplicate_candidates->0->>'score')::numeric = 1
+            and i.duplicate_candidates->0->'reasons' = '["moderator_merge"]'::jsonb
+            and (i.duplicate_candidates->0->>'high_similarity')::boolean
+            and not (i.duplicate_candidates->0 ? 'merge_target')
+            and (
+                select count(*)
+                from jsonb_object_keys(i.duplicate_candidates->0)
+            ) = 5
         )
     from talent_import_items i
     join talent_review_events e using (item_id)

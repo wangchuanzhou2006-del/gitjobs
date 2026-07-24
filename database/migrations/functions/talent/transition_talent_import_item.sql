@@ -10,6 +10,20 @@ returns boolean as $$
 declare
     v_status text;
 begin
+    if p_reason is not null
+       and p_reason not in (
+           'duplicate',
+           'rejected',
+           'reprocess',
+           'withdrawn',
+           'moderator_correction',
+           'policy_violation',
+           'expired',
+           'other'
+       ) then
+        raise exception 'invalid talent audit reason' using errcode = '22023';
+    end if;
+
     select status
     into v_status
     from talent_import_items

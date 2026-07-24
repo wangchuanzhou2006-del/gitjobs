@@ -9,6 +9,20 @@ declare
     v_source_id uuid;
     v_item_id uuid;
 begin
+    if p_reason is not null
+       and p_reason not in (
+           'duplicate',
+           'rejected',
+           'reprocess',
+           'withdrawn',
+           'moderator_correction',
+           'policy_violation',
+           'expired',
+           'other'
+       ) then
+        raise exception 'invalid talent audit reason' using errcode = '22023';
+    end if;
+
     update talent_records
     set
         status = 'withdrawn',

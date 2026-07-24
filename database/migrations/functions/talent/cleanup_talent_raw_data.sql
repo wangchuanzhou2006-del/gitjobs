@@ -11,10 +11,7 @@ begin
         where raw_deleted_at is null
           and (
               raw_delete_after <= p_now
-              or (
-                  raw_delete_after is null
-                  and created_at <= p_now - interval '90 days'
-              )
+              or created_at <= p_now - interval '90 days'
           )
         for update
     ),
@@ -41,10 +38,7 @@ begin
     where raw_deleted_at is null
       and (
           raw_delete_after <= p_now
-          or (
-              raw_delete_after is null
-              and created_at <= p_now - interval '90 days'
-          )
+          or created_at <= p_now - interval '90 days'
       );
     get diagnostics v_batches = row_count;
 

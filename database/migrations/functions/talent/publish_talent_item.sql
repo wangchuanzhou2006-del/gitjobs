@@ -17,6 +17,7 @@ declare
     v_global_enabled boolean;
     v_publication jsonb;
     v_required_complete boolean;
+    v_safety_valid boolean;
     v_hard_block boolean;
     v_high_duplicate boolean;
 begin
@@ -126,56 +127,143 @@ begin
     end;
 
     v_contact_count := jsonb_array_length(p_contacts);
-    v_hard_block := case
-        when v_item.risk_reasons is null then false
-        when jsonb_typeof(v_item.risk_reasons) <> 'array' then true
-        when exists (
+    v_safety_valid :=
+        jsonb_typeof(v_item.risk_reasons) = 'array'
+        and not exists (
             select 1
-            from jsonb_array_elements(v_item.risk_reasons) as reasons(reason)
+            from jsonb_array_elements(
+                case
+                    when jsonb_typeof(v_item.risk_reasons) = 'array' then v_item.risk_reasons
+                    else '[]'::jsonb
+                end
+            ) as reasons(reason)
             where jsonb_typeof(reason) <> 'object'
-               or (
-                   reason ? 'hard_block'
-                   and jsonb_typeof(reason->'hard_block') <> 'boolean'
+               or not (reason ?& array['code', 'explanation', 'evidence', 'hard_block'])
+               or exists (
+                   select 1
+                   from jsonb_object_keys(
+                       case when jsonb_typeof(reason) = 'object' then reason else '{}'::jsonb end
+                   ) as keys(key)
+                   where key <> all(array['code', 'explanation', 'evidence', 'hard_block'])
                )
-               or (
-                   reason ? 'hardBlock'
-                   and jsonb_typeof(reason->'hardBlock') <> 'boolean'
-               )
-        ) then true
-        else jsonb_path_exists(
-            v_item.risk_reasons,
-            '$[*] ? (@.hard_block == true || @.hardBlock == true)'
+               or jsonb_typeof(reason->'code') <> 'string'
+               or coalesce(reason->>'code', '') = ''
+               or jsonb_typeof(reason->'explanation') <> 'string'
+               or coalesce(reason->>'explanation', '') = ''
+               or jsonb_typeof(reason->'evidence') not in ('string', 'null')
+               or jsonb_typeof(reason->'hard_block') <> 'boolean'
         )
+        and jsonb_typeof(v_item.duplicate_candidates) = 'array'
+        and not exists (
+            select 1
+            from jsonb_array_elements(
+                case
+                    when jsonb_typeof(v_item.duplicate_candidates) = 'array'
+                        then v_item.duplicate_candidates
+                    else '[]'::jsonb
+                end
+            ) as candidates(candidate)
+            where jsonb_typeof(candidate) <> 'object'
+               or not (
+                   candidate ?& array[
+                       'candidate_item_id',
+                       'candidate_record_id',
+                       'score',
+                       'reasons',
+                       'high_similarity'
+                   ]
+               )
+               or exists (
+                   select 1
+                   from jsonb_object_keys(
+                       case
+                           when jsonb_typeof(candidate) = 'object' then candidate
+                           else '{}'::jsonb
+                       end
+                   ) as keys(key)
+                   where key <> all(
+                       array[
+                           'candidate_item_id',
+                           'candidate_record_id',
+                           'score',
+                           'reasons',
+                           'high_similarity'
+                       ]
+                   )
+               )
+               or jsonb_typeof(candidate->'candidate_item_id') not in ('string', 'null')
+               or jsonb_typeof(candidate->'candidate_record_id') not in ('string', 'null')
+               or (
+                   jsonb_typeof(candidate->'candidate_item_id') = 'null'
+                   and jsonb_typeof(candidate->'candidate_record_id') = 'null'
+               )
+               or (
+                   jsonb_typeof(candidate->'candidate_item_id') = 'string'
+                   and (candidate->>'candidate_item_id')
+                       !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+               )
+               or (
+                   jsonb_typeof(candidate->'candidate_record_id') = 'string'
+                   and (candidate->>'candidate_record_id')
+                       !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+               )
+               or jsonb_typeof(candidate->'score') <> 'number'
+               or case
+                   when jsonb_typeof(candidate->'score') = 'number'
+                       then (candidate->>'score')::numeric not between 0 and 1
+                   else false
+               end
+               or jsonb_typeof(candidate->'reasons') <> 'array'
+               or exists (
+                   select 1
+                   from jsonb_array_elements(
+                       case
+                           when jsonb_typeof(candidate->'reasons') = 'array'
+                               then candidate->'reasons'
+                           else '[]'::jsonb
+                       end
+                   ) as duplicate_reasons(reason)
+                   where jsonb_typeof(reason) <> 'string'
+                      or coalesce(reason #>> '{}', '') = ''
+               )
+               or jsonb_typeof(candidate->'high_similarity') <> 'boolean'
+        );
+
+    v_hard_block := case
+        when v_safety_valid then jsonb_path_exists(
+            v_item.risk_reasons,
+            '$[*] ? (@.hard_block == true)'
+        )
+        else true
     end;
     v_high_duplicate := case
-        when v_item.duplicate_candidates is null then false
-        when jsonb_typeof(v_item.duplicate_candidates) <> 'array' then true
-        when exists (
-            select 1
-            from jsonb_array_elements(v_item.duplicate_candidates) as candidates(candidate)
-            where jsonb_typeof(candidate) <> 'object'
-               or (
-                   candidate ? 'high_similarity'
-                   and jsonb_typeof(candidate->'high_similarity') <> 'boolean'
-               )
-               or (
-                   candidate ? 'highSimilarity'
-                   and jsonb_typeof(candidate->'highSimilarity') <> 'boolean'
-               )
-               or (
-                   candidate ? 'score'
-                   and jsonb_typeof(candidate->'score') <> 'number'
-               )
-        ) then true
-        else jsonb_path_exists(
+        when v_safety_valid then jsonb_path_exists(
             v_item.duplicate_candidates,
-            '$[*] ? (@.high_similarity == true || @.highSimilarity == true || @.score >= 0.85)'
+            '$[*] ? (@.high_similarity == true || @.score >= 0.85)'
         )
+        else true
     end;
     v_required_complete :=
         coalesce(v_item.extraction->>'kind', '') = v_item.kind
         and coalesce(nullif(v_publication->>'title', ''), '') <> ''
         and coalesce(nullif(v_publication->>'published_at', ''), '') <> ''
+        and case
+            when jsonb_typeof(v_publication->'roles') = 'array'
+                then jsonb_array_length(v_publication->'roles') > 0
+            else false
+        end
+        and not exists (
+            select 1
+            from jsonb_array_elements(
+                case
+                    when jsonb_typeof(v_publication->'roles') = 'array'
+                        then v_publication->'roles'
+                    else '[]'::jsonb
+                end
+            ) as roles(role)
+            where jsonb_typeof(role) <> 'string'
+               or coalesce(role #>> '{}', '') = ''
+        )
         and (
             coalesce(nullif(v_publication->>'city', ''), '') <> ''
             or coalesce(nullif(v_publication->>'district', ''), '') <> ''
@@ -201,30 +289,32 @@ begin
         end
         and (
             v_item.validation_errors is null
-            or (
-                jsonb_typeof(v_item.validation_errors) = 'array'
-                and jsonb_array_length(v_item.validation_errors) = 0
-            )
+            or case
+                when jsonb_typeof(v_item.validation_errors) = 'array'
+                    then jsonb_array_length(v_item.validation_errors) = 0
+                else false
+            end
         )
         and (
             coalesce(
                 v_item.extraction->'missingFields',
                 v_item.extraction->'missing_fields'
             ) is null
-            or (
-                jsonb_typeof(
+            or case
+                when jsonb_typeof(
                     coalesce(
                         v_item.extraction->'missingFields',
                         v_item.extraction->'missing_fields'
                     )
                 ) = 'array'
-                and jsonb_array_length(
+                    then jsonb_array_length(
                     coalesce(
                         v_item.extraction->'missingFields',
                         v_item.extraction->'missing_fields'
                     )
                 ) = 0
-            )
+                else false
+            end
         );
 
     if p_automatic and not coalesce((
@@ -236,6 +326,7 @@ begin
         and v_source.confirmed_at is not null
         and coalesce(v_global_enabled, false)
         and coalesce(v_item.extraction_confidence, 0) >= 0.90
+        and v_safety_valid
         and v_required_complete
         and not v_high_duplicate
     ), false) then
@@ -250,8 +341,17 @@ begin
            or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
            or coalesce(contact->>'ciphertext', '') !~ '^(?:[0-9a-fA-F]{2})+$'
            or coalesce(nullif(contact->>'encryption_key_version', '')::integer, 0) < 1
-           or coalesce(nullif(contact->>'masked_value', ''), '') = ''
+           or coalesce(contact->>'masked_value', '')
+               !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
     ) then
+        if exists (
+            select 1
+            from jsonb_array_elements(p_contacts) as masked_contacts(contact)
+            where coalesce(contact->>'masked_value', '')
+                !~ '^[[:alnum:]]{0,4}\*{3,}[[:alnum:]]{0,4}$'
+        ) then
+            raise exception 'invalid masked talent publication contact' using errcode = '22023';
+        end if;
         raise exception 'invalid encrypted talent publication contact' using errcode = '22023';
     end if;
 
