@@ -10,7 +10,82 @@ with subject as (
         item.normalized_fingerprint,
         item.contact_hashes,
         item.kind,
-        batch.source_id
+        batch.source_id,
+        coalesce(
+            (
+                select jsonb_agg(role #>> '{}')
+                from jsonb_array_elements(
+                    case
+                        when jsonb_typeof(item.extraction->'roles') = 'array'
+                            then item.extraction->'roles'
+                        else '[]'::jsonb
+                    end
+                ) role
+                where jsonb_typeof(role) = 'string'
+            ),
+            '[]'::jsonb
+        ) as roles,
+        case
+            when jsonb_typeof(item.extraction->'city') = 'string'
+                then item.extraction->>'city'
+        end as city,
+        case
+            when jsonb_typeof(item.extraction->'district') = 'string'
+                then item.extraction->>'district'
+        end as district,
+        case
+            when jsonb_typeof(coalesce(
+                item.extraction->'salaryMin',
+                item.extraction->'salary_min'
+            )) = 'number'
+                then coalesce(
+                    item.extraction->>'salaryMin',
+                    item.extraction->>'salary_min'
+                )::integer
+        end as salary_min,
+        case
+            when jsonb_typeof(coalesce(
+                item.extraction->'salaryMax',
+                item.extraction->'salary_max'
+            )) = 'number'
+                then coalesce(
+                    item.extraction->>'salaryMax',
+                    item.extraction->>'salary_max'
+                )::integer
+        end as salary_max,
+        lower(
+            regexp_replace(
+                concat_ws(
+                    ' ',
+                    case
+                        when jsonb_typeof(item.extraction->'title') = 'string'
+                            then item.extraction->>'title'
+                    end,
+                    (
+                        select string_agg(role #>> '{}', ' ')
+                        from jsonb_array_elements(
+                            case
+                                when jsonb_typeof(item.extraction->'roles') = 'array'
+                                    then item.extraction->'roles'
+                                else '[]'::jsonb
+                            end
+                        ) role
+                        where jsonb_typeof(role) = 'string'
+                    ),
+                    case
+                        when jsonb_typeof(item.extraction->'city') = 'string'
+                            then item.extraction->>'city'
+                    end,
+                    case
+                        when jsonb_typeof(item.extraction->'district') = 'string'
+                            then item.extraction->>'district'
+                    end
+                ),
+                '\s+',
+                ' ',
+                'g'
+            )
+        ) as normalized_text
     from talent_import_items item
     join talent_import_batches batch using (batch_id)
     where item.item_id = p_item_id
@@ -221,6 +296,53 @@ candidates as (
     select * from item_candidates
     union all
     select * from record_candidates
+),
+-- Preselection uses a conservative text upper bound; Rust recomputes the authoritative score.
+ranked_candidates as (
+    select
+        candidates.*,
+        (
+            case
+                when exists (
+                    select 1
+                    from jsonb_array_elements_text(subject.roles) as subject_role(value)
+                    join jsonb_array_elements_text(candidates.roles) as candidate_role(value)
+                      on lower(btrim(subject_role.value)) = lower(btrim(candidate_role.value))
+                     and btrim(subject_role.value) <> ''
+                ) then 0.35
+                else 0.0
+            end
+            + case
+                when (
+                    lower(btrim(subject.city)) = lower(btrim(candidates.city))
+                    and btrim(subject.city) <> ''
+                ) or (
+                    lower(btrim(subject.district)) = lower(btrim(candidates.district))
+                    and btrim(subject.district) <> ''
+                ) then 0.25
+                else 0.0
+            end
+            + case
+                when subject.salary_min is not null
+                 and subject.salary_max is not null
+                 and candidates.salary_min is not null
+                 and candidates.salary_max is not null
+                 and subject.salary_min <= candidates.salary_max
+                 and candidates.salary_min <= subject.salary_max then 0.20
+                else 0.0
+            end
+            + case
+                when candidates.source_id = subject.source_id then 0.10
+                else 0.0
+            end
+            + case
+                when coalesce(subject.normalized_text, '') <> ''
+                 and coalesce(candidates.normalized_text, '') <> '' then 0.10
+                else 0.0
+            end
+        ) as structured_upper_bound
+    from candidates
+    cross join subject
 )
 select coalesce(
     jsonb_agg(
@@ -241,14 +363,14 @@ select coalesce(
             'reasons', reasons,
             'high_similarity', high_similarity
         )
-        order by score desc, updated_at desc
+        order by score desc, structured_upper_bound desc, updated_at desc
     ),
     '[]'::jsonb
 )
 from (
     select *
-    from candidates
-    order by score desc, updated_at desc
+    from ranked_candidates
+    order by score desc, structured_upper_bound desc, updated_at desc
     limit greatest(0, least(coalesce(p_limit, 20), 100))
 ) limited;
 $$ language sql stable;

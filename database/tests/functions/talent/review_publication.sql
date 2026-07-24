@@ -1,5 +1,5 @@
 begin;
-select plan(48);
+select plan(49);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -13,6 +13,7 @@ select plan(48);
 \set autoItemId '00000000-0000-0000-0000-000000000636'
 \set incompleteItemId '00000000-0000-0000-0000-000000000637'
 \set gateItemId '00000000-0000-0000-0000-000000000638'
+\set oldStructuredItemId '00000000-0000-0000-0000-000000000639'
 \set targetRecordId '00000000-0000-0000-0000-000000000641'
 
 insert into "user" (auth_hash, email, name, user_id, username)
@@ -420,6 +421,101 @@ select ok(
     ),
     'duplicate lookup never returns raw or complete contact material'
 );
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    contact_hashes,
+    normalized_fingerprint,
+    kind,
+    status,
+    extraction,
+    extraction_confidence,
+    validation_errors,
+    risk_score,
+    risk_level,
+    risk_reasons,
+    duplicate_candidates,
+    processed_at,
+    updated_at
+)
+values (
+    :'oldStructuredItemId',
+    :'batchId',
+    20,
+    array['old-structured-safe-hash'],
+    'old-structured-fingerprint',
+    'hiring',
+    'needs_review',
+    '{"kind":"hiring","title":"Old Structured Match","city":"Test City","salaryMin":1000,"salaryMax":2000,"roles":["Synthetic Role"],"missingFields":[]}'::jsonb,
+    0.98,
+    '[]'::jsonb,
+    5,
+    'low',
+    '[]'::jsonb,
+    '[]'::jsonb,
+    current_timestamp - interval '30 days',
+    current_timestamp - interval '30 days'
+);
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    contact_hashes,
+    normalized_fingerprint,
+    kind,
+    status,
+    extraction,
+    extraction_confidence,
+    validation_errors,
+    risk_score,
+    risk_level,
+    risk_reasons,
+    duplicate_candidates,
+    processed_at,
+    updated_at
+)
+select
+    gen_random_uuid(),
+    :'batchId',
+    20 + decoy,
+    array[format('selection-decoy-hash-%s', decoy)],
+    format('selection-decoy-fingerprint-%s', decoy),
+    'hiring',
+    'needs_review',
+    jsonb_build_object(
+        'kind', 'hiring',
+        'title', format('New Unrelated Candidate %s', decoy),
+        'city', format('Other City %s', decoy),
+        'salaryMin', 20000 + decoy,
+        'salaryMax', 30000 + decoy,
+        'roles', jsonb_build_array(format('Other Role %s', decoy)),
+        'missingFields', '[]'::jsonb
+    ),
+    0.98,
+    '[]'::jsonb,
+    5,
+    'low',
+    '[]'::jsonb,
+    '[]'::jsonb,
+    current_timestamp + make_interval(secs => decoy),
+    current_timestamp + make_interval(secs => decoy)
+from generate_series(1, 6) decoy;
+
+select ok(
+    exists (
+        select 1
+        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 3)) candidate
+        where candidate->>'candidate_item_id' = :'oldStructuredItemId'
+    ),
+    'safe structured ranking keeps an old potential high match ahead of newer unrelated rows'
+);
+
+delete from talent_import_items
+where item_id = :'oldStructuredItemId'
+   or normalized_fingerprint like 'selection-decoy-fingerprint-%';
 
 update talent_import_items
 set extraction = jsonb_set(extraction, '{roles}', '[]'::jsonb)
