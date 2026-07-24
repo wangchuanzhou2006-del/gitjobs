@@ -15,6 +15,11 @@ pub(crate) mod risk;
 
 pub(crate) mod rules;
 
+#[allow(dead_code)]
+pub(crate) mod service;
+
+pub(crate) mod processor;
+
 #[allow(unused_imports)]
 pub(crate) use ai::*;
 #[allow(unused_imports)]
@@ -24,9 +29,13 @@ pub(crate) use duplicate::*;
 #[allow(unused_imports)]
 pub(crate) use model::*;
 #[allow(unused_imports)]
+pub(crate) use processor::*;
+#[allow(unused_imports)]
 pub(crate) use risk::*;
 #[allow(unused_imports)]
 pub(crate) use rules::*;
+#[allow(unused_imports)]
+pub(crate) use service::*;
 pub(crate) use splitter::*;
 #[allow(unused_imports)]
 pub(crate) use validation::*;

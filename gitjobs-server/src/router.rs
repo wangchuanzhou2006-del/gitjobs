@@ -1,5 +1,7 @@
 //! This module defines the router used to dispatch HTTP requests to handlers.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
     Extension, Router,
@@ -40,6 +42,7 @@ use crate::{
     },
     img::DynImageStore,
     notifications::DynNotificationsManager,
+    talent::TalentServices,
 };
 
 /// Embeds static files from the "static" folder into the binary.
@@ -67,6 +70,8 @@ pub(crate) struct State {
     pub event_tracker: DynEventTracker,
     /// Shared HTTP client for outbound requests.
     pub http_client: Client,
+    /// Talent import, review, and background processing services.
+    pub talent: Arc<TalentServices>,
 }
 
 /// Sets up the main application router and all sub-routers.
@@ -77,6 +82,8 @@ pub(crate) async fn setup(
     image_store: DynImageStore,
     notifications_manager: DynNotificationsManager,
     event_tracker: DynEventTracker,
+    talent: Arc<TalentServices>,
+    http_client: Client,
 ) -> Result<Router> {
     // Setup router state
     let serde_qs_de = serde_qs_config();
@@ -84,10 +91,11 @@ pub(crate) async fn setup(
         cfg: cfg.clone(),
         db: db.clone(),
         event_tracker,
-        http_client: Client::new(),
+        http_client,
         image_store,
         notifications_manager,
         serde_qs_de,
+        talent,
     };
 
     // Setup authentication / authorization layer

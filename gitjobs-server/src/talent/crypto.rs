@@ -85,10 +85,16 @@ impl TalentCrypto {
     }
 
     pub(crate) fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<EncryptedValue, CryptoError> {
-        let key = self
-            .keys
-            .get(&self.active_version)
-            .ok_or(CryptoError::MissingActiveKey)?;
+        self.encrypt_with_version(plaintext, aad, &self.active_version)
+    }
+
+    pub(crate) fn encrypt_with_version(
+        &self,
+        plaintext: &[u8],
+        aad: &[u8],
+        key_version: &str,
+    ) -> Result<EncryptedValue, CryptoError> {
+        let key = self.keys.get(key_version).ok_or(CryptoError::UnknownKeyVersion)?;
         let mut nonce = [0_u8; NONCE_LEN];
         rand::rng().fill(&mut nonce);
         let mut tag = [0_u8; TAG_LEN];
@@ -100,7 +106,7 @@ impl TalentCrypto {
         bytes.extend_from_slice(&tag);
 
         Ok(EncryptedValue {
-            key_version: self.active_version.clone(),
+            key_version: key_version.to_owned(),
             bytes,
         })
     }
@@ -309,6 +315,21 @@ mod tests {
         let encrypted = old_crypto.encrypt(b"fictional source", b"contact:synthetic").unwrap();
         let crypto = crypto("current", &[("current", CURRENT_KEY), ("old", PREVIOUS_KEY)]);
 
+        assert_eq!(
+            crypto.decrypt(&encrypted, b"contact:synthetic").unwrap(),
+            b"fictional source"
+        );
+    }
+
+    #[test]
+    fn encrypts_new_values_with_a_requested_older_configured_key() {
+        let crypto = crypto("current", &[("current", CURRENT_KEY), ("old", PREVIOUS_KEY)]);
+
+        let encrypted = crypto
+            .encrypt_with_version(b"fictional source", b"contact:synthetic", "old")
+            .unwrap();
+
+        assert_eq!(encrypted.key_version, "old");
         assert_eq!(
             crypto.decrypt(&encrypted, b"contact:synthetic").unwrap(),
             b"fictional source"

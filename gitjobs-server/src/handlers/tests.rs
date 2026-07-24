@@ -3,6 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use async_trait::async_trait;
 use axum::Router;
 use axum_login::tower_sessions::session;
 use chrono::{TimeZone, Utc};
@@ -22,6 +23,7 @@ use crate::{
     img::{ImageFormat, MockImageStore},
     notifications::{MockNotificationsManager, NotificationKind},
     router,
+    talent::{AiError, ExtractionRequest, TalentAiProvider, TalentCrypto, TalentExtraction, TalentServices},
     templates::{
         dashboard::{
             employer::{
@@ -52,6 +54,16 @@ pub(crate) struct TestRouterBuilder {
     event_tracker: Option<MockEventTracker>,
     image_store: Option<MockImageStore>,
     notifications_manager: Option<MockNotificationsManager>,
+    talent_worker_enabled: bool,
+}
+
+struct TestTalentAi;
+
+#[async_trait]
+impl TalentAiProvider for TestTalentAi {
+    async fn extract(&self, _request: ExtractionRequest) -> Result<TalentExtraction, AiError> {
+        Ok(TalentExtraction::default())
+    }
 }
 
 impl TestRouterBuilder {
@@ -62,10 +74,35 @@ impl TestRouterBuilder {
         let event_tracker = Arc::new(self.event_tracker.unwrap_or_default());
         let image_store = Arc::new(self.image_store.unwrap_or_default());
         let notifications_manager = Arc::new(self.notifications_manager.unwrap_or_default());
+        let crypto = Arc::new(
+            TalentCrypto::new(
+                "1".to_owned(),
+                HashMap::from([(
+                    "1".to_owned(),
+                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
+                )]),
+                "test-contact-pepper".to_owned(),
+            )
+            .expect("deterministic test crypto should be valid"),
+        );
+        let talent = TalentServices::for_tests(db.clone(), crypto, Arc::new(TestTalentAi));
+        assert!(
+            !self.talent_worker_enabled,
+            "handler test routers do not own background worker lifetimes"
+        );
+        let http_client = reqwest::Client::new();
 
-        router::setup(cfg, db, image_store, notifications_manager, event_tracker)
-            .await
-            .expect("router setup should succeed")
+        router::setup(
+            cfg,
+            db,
+            image_store,
+            notifications_manager,
+            event_tracker,
+            talent,
+            http_client,
+        )
+        .await
+        .expect("router setup should succeed")
     }
 
     /// Creates a new test router builder with required dependencies.
@@ -76,7 +113,14 @@ impl TestRouterBuilder {
             event_tracker: None,
             image_store: None,
             notifications_manager: Some(notifications_manager),
+            talent_worker_enabled: false,
         }
+    }
+
+    /// Keeps background talent processing disabled for deterministic handler tests.
+    pub(crate) fn without_talent_worker(mut self) -> Self {
+        self.talent_worker_enabled = false;
+        self
     }
 
     /// Sets a custom HTTP server configuration.

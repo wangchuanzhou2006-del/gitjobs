@@ -11,6 +11,7 @@ use img::db::DbImageStore;
 use notifications::{DynEmailSender, LettreEmailSender, PgNotificationsManager};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
+use reqwest::Client;
 use tokio::{net::TcpListener, signal};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -20,6 +21,7 @@ use tracing_subscriber::EnvFilter;
 use crate::{
     config::{Config, LogFormat},
     db::PgDB,
+    talent::TalentServices,
 };
 
 mod auth;
@@ -105,8 +107,19 @@ async fn main() -> Result<()> {
         &cancellation_token,
     ));
 
+    // Build the talent services once so HTTP handlers and workers share the same state.
+    let http_client = Client::new();
+    let talent_services = TalentServices::from_config(db.clone(), &cfg.talent, http_client.clone())
+        .context("error setting up talent services")?;
+
     // Run additional background workers.
-    workers::run(db.clone(), &task_tracker, cancellation_token.clone());
+    workers::run(
+        db.clone(),
+        talent_services.clone(),
+        cfg.talent.enabled,
+        &task_tracker,
+        cancellation_token.clone(),
+    );
 
     // Setup and launch the HTTP server.
     let router = router::setup(
@@ -115,6 +128,8 @@ async fn main() -> Result<()> {
         image_store,
         notifications_manager,
         event_tracker,
+        talent_services,
+        http_client,
     )
     .await?;
     let listener = TcpListener::bind(&cfg.server.addr).await?;
