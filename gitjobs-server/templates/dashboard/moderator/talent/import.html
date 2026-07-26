@@ -1,0 +1,100 @@
+{% extends "dashboard/dashboard_base_moderator.html" -%}
+{% import "macros/ui.html" as ui -%}
+
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}整理人才信息 | GitJobs{% endblock page_title %}
+{% block page_description %}整理并查看餐饮招聘和求职信息的处理进度。{% endblock page_description %}
+
+{% block dashboard_main -%}
+  <div id="dashboard-content" class="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6 sm:py-8 lg:px-10">
+    <header class="border-b border-stone-200 pb-5 sm:pb-7">
+      <p class="mb-2 text-sm font-semibold text-primary-700">人才信息</p>
+      <h1 class="m-0 text-2xl font-semibold text-stone-950 sm:text-3xl">整理人才信息</h1>
+      <p class="mb-0 mt-2 max-w-2xl text-sm leading-6 text-stone-600">粘贴招聘或求职内容，系统整理后会放入待查看列表。</p>
+    </header>
+    {% include "dashboard/moderator/talent/components/workflow_nav.html" -%}
+
+    {% if !errors.is_empty() -%}
+      <div class="mt-5 border-l-4 border-red-600 bg-red-50 px-4 py-3 text-sm text-red-900"
+           role="alert"
+           aria-labelledby="talent-import-errors-title">
+        <p id="talent-import-errors-title" class="m-0 font-semibold">还有内容需要补充</p>
+        <ul class="mb-0 mt-2 list-disc space-y-1 ps-5">
+          {% for error in errors -%}<li>{{ error }}</li>{% endfor -%}
+        </ul>
+      </div>
+    {% endif -%}
+
+    <form id="talent-import-form"
+          method="post"
+          action="/dashboard/moderator/talent/import"
+          class="mt-6 space-y-6">
+      <fieldset class="grid grid-cols-1 gap-5 border-0 p-0 sm:grid-cols-2">
+        <legend class="sr-only">信息来源</legend>
+        <div>
+          <label for="source-type" class="form-label">来自哪里</label>
+          <select id="source-type" name="source_type" class="input-primary mt-2 min-h-11" required>
+            {{ ui::select_option(value = "wechat_group", label = "微信群", selected = source_type) }}
+            {{ ui::select_option(value = "qq_group", label = "QQ群", selected = source_type) }}
+            {{ ui::select_option(value = "web", label = "公开网页", selected = source_type) }}
+            {{ ui::select_option(value = "other", label = "其他", selected = source_type) }}
+          </select>
+        </div>
+        <div>
+          <label for="source-name" class="form-label">来源名称</label>
+          <input id="source-name"
+                 name="source_name"
+                 type="text"
+                 value="{{ source_name }}"
+                 maxlength="120"
+                 class="input-primary mt-2 min-h-11"
+                 placeholder="例如：北京餐饮招聘群"
+                 autocomplete="off"
+                 required>
+        </div>
+      </fieldset>
+
+      <div>
+        <div class="flex items-end justify-between gap-4">
+          <label for="talent-raw-text" class="form-label">粘贴需要整理的内容</label>
+          <div class="shrink-0 text-right text-xs text-stone-500">
+            <output id="talent-character-count"
+                    for="talent-raw-text"
+                    aria-live="polite">0 字</output>
+            <span id="talent-raw-limit" class="block">最多 200,000 字节</span>
+          </div>
+        </div>
+        <textarea id="talent-raw-text"
+                  name="raw_text"
+                  rows="12"
+                  class="input-primary mt-2 min-h-64 resize-y leading-6"
+                  placeholder="在这里粘贴招聘或求职信息"
+                  aria-describedby="talent-raw-limit"
+                  required></textarea>
+      </div>
+
+      <div class="sticky bottom-0 z-10 -mx-4 border-t border-stone-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:p-0">
+        <button type="submit" class="btn-primary min-h-11 w-full justify-center sm:w-auto">开始 AI 整理</button>
+      </div>
+    </form>
+
+    <section class="mt-10 border-t border-stone-200 pt-7" aria-labelledby="recent-talent-batches-title">
+      <div class="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 id="recent-talent-batches-title" class="m-0 text-lg font-semibold text-stone-950">最近整理</h2>
+          <p class="mb-0 mt-1 text-sm text-stone-500">处理完成后，可前往待查看列表确认。</p>
+        </div>
+      </div>
+      {% include "dashboard/moderator/talent/components/recent_batches.html" -%}
+    </section>
+  </div>
+
+  <script type="module">
+    import { initializeTalentImportForm } from "/static/js/dashboard/moderator/talent-import.js";
+    initializeTalentImportForm();
+  </script>
+
+  {% if !messages.is_empty() -%}
+    {{ ui::alerts(messages) -}}
+  {% endif -%}
+{% endblock dashboard_main -%}

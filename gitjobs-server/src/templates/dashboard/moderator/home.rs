@@ -4,7 +4,12 @@ use askama::Template;
 use axum_messages::{Level, Message};
 use serde::{Deserialize, Serialize};
 
-use crate::templates::{Config, PageId, auth::User, dashboard::moderator::jobs, filters};
+use crate::templates::{
+    Config, PageId,
+    auth::User,
+    dashboard::moderator::{Menu, jobs},
+    filters,
+};
 
 // Pages templates.
 
@@ -23,6 +28,9 @@ pub(crate) struct Page {
     /// Authenticated user information.
     pub user: User,
 
+    /// Active items in the shared moderator navigation.
+    pub moderator_menu: Menu,
+
     /// Name of the authentication provider, if any.
     pub auth_provider: Option<String>,
 }
@@ -40,12 +48,12 @@ pub(crate) enum Content {
 
 impl Content {
     /// Check if the content is the live jobs page.
-    fn is_live_jobs(&self) -> bool {
+    pub(crate) fn is_live_jobs(&self) -> bool {
         matches!(self, Content::LiveJobs(_))
     }
 
     /// Check if the content is the pending jobs page.
-    fn is_pending_jobs(&self) -> bool {
+    pub(crate) fn is_pending_jobs(&self) -> bool {
         matches!(self, Content::PendingJobs(_))
     }
 }

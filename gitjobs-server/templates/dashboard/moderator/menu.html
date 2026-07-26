@@ -9,7 +9,11 @@
 <div class="max-h-full w-full flex flex-col space-y-5 mb-5 overflow-y-auto px-3 lg:px-5">
   <div class="leading-10 grid gap-y-0.5">
     {{ dashboard::menu_title(text = "Jobs", extra_styles = "py-1.5") }}
-    {{ dashboard::menu_item(name = "Pending", icon = "tasks", is_active = content.is_pending_jobs() , href = "/dashboard/moderator?tab=pending-jobs") -}}
-    {{ dashboard::menu_item(name = "Live", icon = "live", is_active = content.is_live_jobs() , href = "/dashboard/moderator?tab=live-jobs") -}}
+    {{ dashboard::menu_item(name = "Pending", icon = "tasks", is_active = moderator_menu.pending_jobs, href = "/dashboard/moderator?tab=pending-jobs") -}}
+    {{ dashboard::menu_item(name = "Live", icon = "live", is_active = moderator_menu.live_jobs, href = "/dashboard/moderator?tab=live-jobs") -}}
+  </div>
+  <div class="leading-10 grid gap-y-0.5">
+    {{ dashboard::menu_title(text = "Talent", extra_styles = "py-1.5") }}
+    {{ dashboard::menu_item(name = "整理信息", icon = "tasks", is_active = moderator_menu.talent_import, href = "/dashboard/moderator/talent/import") -}}
   </div>
 </div>

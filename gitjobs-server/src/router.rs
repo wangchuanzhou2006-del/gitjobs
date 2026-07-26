@@ -332,6 +332,11 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
         .route("/jobs/{job_id}/approve", put(dashboard::moderator::jobs::approve))
         .route("/jobs/{job_id}/reject", put(dashboard::moderator::jobs::reject))
         .route(
+            "/talent/import",
+            get(dashboard::moderator::talent::import::page)
+                .post(dashboard::moderator::talent::import::create),
+        )
+        .route(
             "/jobs/{employer_id}/{job_id}/preview",
             get(dashboard::moderator::jobs::preview_page),
         )
