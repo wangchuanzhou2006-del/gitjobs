@@ -1,5 +1,5 @@
 begin;
-select plan(58);
+select plan(63);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -221,6 +221,62 @@ select is(
     jsonb_array_length(list_talent_review_items('{}'::text[], null, 50)),
     8,
     'an empty state filter returns all review items'
+);
+
+select is(
+    jsonb_array_length(
+        list_talent_review_items(
+            array['needs_review'],
+            :'sourceId',
+            50,
+            array['hiring'],
+            array['high'],
+            current_timestamp - interval '1 day',
+            :'batchId'
+        )
+    ),
+    1,
+    'review list combines kind and risk filters'
+);
+
+select is(
+    jsonb_array_length(
+        list_talent_review_items(
+            '{}', gen_random_uuid(), 50, '{}', '{}', null, null
+        )
+    ),
+    0,
+    'review list filters by source'
+);
+
+select is(
+    jsonb_array_length(
+        list_talent_review_items(
+            '{}', null, 50, '{}', '{}', current_timestamp + interval '1 day', null
+        )
+    ),
+    0,
+    'review list filters by update time'
+);
+
+select is(
+    jsonb_array_length(
+        list_talent_review_items(
+            '{}', null, 50, '{}', '{}', null, gen_random_uuid()
+        )
+    ),
+    0,
+    'review list filters by batch'
+);
+
+select is(
+    jsonb_array_length(
+        list_talent_review_items(
+            '{}', :'sourceId', 50, array['seeking'], array['low'], null, :'batchId'
+        )
+    ),
+    2,
+    'review list combines source, batch, kind, and risk filters'
 );
 
 select is(

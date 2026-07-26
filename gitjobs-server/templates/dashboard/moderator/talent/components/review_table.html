@@ -1,0 +1,33 @@
+{% if items.is_empty() -%}
+  <div class="mt-6 border border-dashed border-stone-300 px-4 py-10 text-center">
+    <p class="m-0 font-medium text-stone-900">这里暂时没有信息</p>
+    <p class="mb-0 mt-1 text-sm text-stone-500">新内容整理完成后会出现在这里。</p>
+  </div>
+{% else -%}
+  <ol class="mt-6 divide-y divide-stone-200 border-y border-stone-200">
+    {% for item in items -%}
+      <li>
+        <a href="/dashboard/moderator/talent/review/{{ item.item_id }}"
+           class="grid min-h-28 grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3 py-4 text-inherit hover:bg-stone-50 sm:px-3">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs font-semibold text-primary-700">{{ item.kind_label }}</span>
+              <span class="text-xs text-stone-500">{{ item.status_label }}</span>
+            </div>
+            <h2 class="mb-0 mt-1 truncate text-base font-semibold text-stone-950">{{ item.title }}</h2>
+            <p class="mb-0 mt-1 truncate text-sm text-stone-600">{{ item.region_label }} · {{ item.role_label }}</p>
+          </div>
+          <span class="self-start text-xs font-semibold {% if item.risk_high %}text-red-700{% else %}text-stone-600{% endif %}">{{ item.risk_label }}</span>
+          <div class="col-span-2 grid grid-cols-2 gap-2 text-xs text-stone-500 sm:grid-cols-4">
+            <span>{{ item.confidence_label }}</span>
+            <span>{{ item.salary_label }}</span>
+            <span>{{ item.completeness_label }}</span>
+            <span>联系方式：{{ item.contact_label }}</span>
+            <span>{{ item.duplicate_label }}</span>
+            <span class="text-right">{{ item.source_name }} · {{ item.updated_label }}</span>
+          </div>
+        </a>
+      </li>
+    {% endfor -%}
+  </ol>
+{% endif -%}

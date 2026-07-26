@@ -10,4 +10,5 @@ pub(crate) struct Menu {
     pub live_jobs: bool,
     pub pending_jobs: bool,
     pub talent_import: bool,
+    pub talent_review: bool,
 }

@@ -196,7 +196,11 @@ pub(crate) struct FailedTalentItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct TalentReviewFilter {
     pub statuses: Vec<ImportItemStatus>,
+    pub kinds: Vec<TalentKind>,
+    pub risk_levels: Vec<RiskLevel>,
     pub source_id: Option<Uuid>,
+    pub updated_after: Option<DateTime<Utc>>,
+    pub batch_id: Option<Uuid>,
     pub limit: u16,
 }
 
@@ -1140,10 +1144,12 @@ pub(crate) trait DBTalent {
     ) -> Result<SaveReviewOutcome>;
     async fn withdraw_talent_record(
         &self,
+        item_id: Uuid,
         record_id: Uuid,
+        lock_version: u32,
         actor_user_id: Uuid,
         reason: Option<AuditReason>,
-    ) -> Result<bool>;
+    ) -> Result<SaveReviewOutcome>;
     async fn list_published_talent_records(
         &self,
         kind: Option<TalentKind>,
@@ -1252,11 +1258,31 @@ impl DBTalent for PgDB {
             .copied()
             .map(import_item_status_name)
             .collect::<Vec<_>>();
+        let kinds = filter.kinds.iter().copied().map(talent_kind_name).collect::<Vec<_>>();
+        let risk_levels = filter
+            .risk_levels
+            .iter()
+            .copied()
+            .map(risk_level_name)
+            .collect::<Vec<_>>();
         let db = self.pool.get().await?;
         let row = db
             .query_one(
-                "select list_talent_review_items($1::text[], $2::uuid, $3::integer)::text;",
-                &[&statuses, &filter.source_id, &i32::from(filter.limit)],
+                "
+                select list_talent_review_items(
+                    $1::text[], $2::uuid, $3::integer, $4::text[],
+                    $5::text[], $6::timestamptz, $7::uuid
+                )::text;
+                ",
+                &[
+                    &statuses,
+                    &filter.source_id,
+                    &i32::from(filter.limit),
+                    &kinds,
+                    &risk_levels,
+                    &filter.updated_after,
+                    &filter.batch_id,
+                ],
             )
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
@@ -1419,20 +1445,37 @@ impl DBTalent for PgDB {
     #[instrument(skip(self, reason), err)]
     async fn withdraw_talent_record(
         &self,
+        item_id: Uuid,
         record_id: Uuid,
+        lock_version: u32,
         actor_user_id: Uuid,
         reason: Option<AuditReason>,
-    ) -> Result<bool> {
+    ) -> Result<SaveReviewOutcome> {
         trace!("db: withdraw talent record");
         let reason = reason.map(AuditReason::as_str);
         let db = self.pool.get().await?;
         let row = db
-            .query_one(
-                "select withdraw_talent_record($1::uuid, $2::uuid, $3::text);",
-                &[&record_id, &actor_user_id, &reason],
+            .query_opt(
+                "
+                select withdraw_talent_record(
+                    $1::uuid, $2::uuid, $3::integer, $4::uuid, $5::text
+                );
+                ",
+                &[
+                    &item_id,
+                    &record_id,
+                    &i32::try_from(lock_version)?,
+                    &actor_user_id,
+                    &reason,
+                ],
             )
             .await?;
-        Ok(row.get(0))
+        Ok(match row.and_then(|row| row.get::<_, Option<i32>>(0)) {
+            Some(next_version) => SaveReviewOutcome::Saved {
+                lock_version: next_version.try_into()?,
+            },
+            None => SaveReviewOutcome::Conflict,
+        })
     }
 
     #[instrument(skip(self), err)]
@@ -1570,6 +1613,14 @@ const fn import_item_status_name(status: ImportItemStatus) -> &'static str {
         ImportItemStatus::Rejected => "rejected",
         ImportItemStatus::Merged => "merged",
         ImportItemStatus::Failed => "failed",
+    }
+}
+
+const fn risk_level_name(risk: RiskLevel) -> &'static str {
+    match risk {
+        RiskLevel::Low => "low",
+        RiskLevel::Medium => "medium",
+        RiskLevel::High => "high",
     }
 }
 

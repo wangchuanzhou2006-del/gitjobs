@@ -332,7 +332,7 @@ fn map_review_error(error: ReviewError) -> ProcessError {
         ReviewError::InvalidExtraction | ReviewError::InvalidState | ReviewError::NotFound => {
             ProcessError::StructuredData
         }
-        ReviewError::Persistence => ProcessError::Persistence,
+        ReviewError::Conflict | ReviewError::Persistence => ProcessError::Persistence,
     }
 }
 

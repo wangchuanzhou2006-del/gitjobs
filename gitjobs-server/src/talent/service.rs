@@ -21,7 +21,7 @@ use crate::{
     talent::{
         AiError, AutoPublishInput, AutoPublishPolicy, ContactCandidate, DuplicateProbe, DuplicateService,
         EncryptedValue, ExtractionRequest, ImportItemStatus, OpenAiCompatibleProvider, RiskEngine, RiskInput,
-        RuleEngine, SourceType, SplitError, SplitLimits, TalentAiProvider, TalentCrypto,
+        RuleEngine, SourceTrust, SourceType, SplitError, SplitLimits, TalentAiProvider, TalentCrypto,
         TalentExtraction, TalentKind, ValidatedExtraction, ValidationIssue, contact_hash,
         duplicate_normalized_text, extraction_fingerprint, mask_contact, split_messages, validate_extraction,
     },
@@ -354,6 +354,8 @@ pub(crate) enum ReviewError {
     InvalidExtraction,
     #[error("talent review protected data is unavailable")]
     ProtectedData,
+    #[error("talent review item changed while it was being reviewed")]
+    Conflict,
     #[error("talent review operation could not be persisted")]
     Persistence,
 }
@@ -377,6 +379,38 @@ impl ReviewService {
         }
     }
 
+    pub(crate) async fn list(
+        &self,
+        filter: crate::db::talent::TalentReviewFilter,
+    ) -> Result<Vec<crate::db::talent::TalentReviewItemSummary>, ReviewError> {
+        self.db
+            .list_talent_review_items(filter)
+            .await
+            .map_err(|_| ReviewError::Persistence)
+    }
+
+    pub(crate) async fn detail(&self, item_id: Uuid) -> Result<PrivateReviewDetail, ReviewError> {
+        let item = self.review_item(item_id).await?;
+        let raw_fragment = match (&item.raw_fragment_ciphertext, item.encryption_key_version) {
+            (Some(bytes), Some(version)) => {
+                let position = usize::try_from(item.position).map_err(|_| ReviewError::InvalidState)?;
+                let plaintext = self
+                    .crypto
+                    .decrypt(
+                        &EncryptedValue {
+                            key_version: version.to_string(),
+                            bytes: bytes.clone(),
+                        },
+                        &fragment_aad(position),
+                    )
+                    .map_err(|_| ReviewError::ProtectedData)?;
+                String::from_utf8(plaintext).map_err(|_| ReviewError::ProtectedData)?
+            }
+            _ => String::new(),
+        };
+        Ok(PrivateReviewDetail { item, raw_fragment })
+    }
+
     pub(crate) async fn save(&self, review: SaveTalentReview) -> Result<SaveReviewOutcome, ReviewError> {
         self.db
             .save_talent_review(review)
@@ -384,12 +418,58 @@ impl ReviewService {
             .map_err(|_| ReviewError::Persistence)
     }
 
+    pub(crate) async fn save_fields(
+        &self,
+        item_id: Uuid,
+        lock_version: u32,
+        actor_user_id: Uuid,
+        fields: ReviewFields,
+    ) -> Result<SaveReviewOutcome, ReviewError> {
+        let item = self.review_item(item_id).await?;
+        if item.lock_version != lock_version {
+            return Ok(SaveReviewOutcome::Conflict);
+        }
+        let mut extraction = item.extraction.clone().ok_or(ReviewError::InvalidState)?;
+        let object = extraction.as_object_mut().ok_or(ReviewError::InvalidExtraction)?;
+        object.insert("title".to_owned(), Value::String(fields.title));
+        object.insert("city".to_owned(), Value::String(fields.city));
+        object.insert("district".to_owned(), Value::String(fields.district));
+        object.insert("roles".to_owned(), json!(split_review_list(&fields.roles)));
+        object.insert("skills".to_owned(), json!(split_review_list(&fields.skills)));
+        object.insert("contacts".to_owned(), json!([]));
+        let parsed: TalentExtraction =
+            serde_json::from_value(extraction).map_err(|_| ReviewError::InvalidExtraction)?;
+        let safe = crate::db::talent::SafeTalentExtraction::try_from(parsed)
+            .map_err(|_| ReviewError::InvalidExtraction)?;
+        self.save(SaveTalentReview {
+            item_id,
+            lock_version,
+            actor_user_id,
+            kind: None,
+            extraction: Some(safe),
+            extraction_confidence: None,
+            contact_masked: None,
+            validation_errors: None,
+            risk_score: None,
+            risk_level: None,
+            risk_reasons: None,
+            duplicate_candidates: None,
+            normalized_fingerprint: None,
+            manual_policy_reasons: None,
+        })
+        .await
+    }
+
     pub(crate) async fn publish(
         &self,
         item_id: Uuid,
+        lock_version: u32,
         actor_user_id: Uuid,
     ) -> Result<PublishOutcome, ReviewError> {
         let item = self.review_item(item_id).await?;
+        if item.lock_version != lock_version {
+            return Err(ReviewError::Conflict);
+        }
         let (validated, hints) = self.revalidate(&item)?;
         let normalized_fingerprint = extraction_fingerprint(&validated.safe);
         let candidates = self
@@ -435,7 +515,7 @@ impl ReviewService {
         let masked = masked_contacts(&validated.contacts)?;
         let save = SaveTalentReview {
             item_id,
-            lock_version: item.lock_version,
+            lock_version,
             actor_user_id,
             kind: Some(validated.safe.kind),
             extraction: Some(
@@ -462,7 +542,7 @@ impl ReviewService {
         };
         let lock_version = match self.save(save).await? {
             SaveReviewOutcome::Saved { lock_version } => lock_version,
-            SaveReviewOutcome::Conflict => return Err(ReviewError::InvalidState),
+            SaveReviewOutcome::Conflict => return Err(ReviewError::Conflict),
         };
         let contacts = encrypt_publication_contacts(&self.crypto, item_id, &validated.contacts)?;
         let record = record_draft(&item, &validated.safe)?;
@@ -477,7 +557,17 @@ impl ReviewService {
                 contacts,
             })
             .await
-            .map_err(|_| ReviewError::Persistence)
+            .map_err(|error| {
+                if error
+                    .downcast_ref::<tokio_postgres::Error>()
+                    .and_then(tokio_postgres::Error::code)
+                    == Some(&tokio_postgres::error::SqlState::T_R_SERIALIZATION_FAILURE)
+                {
+                    ReviewError::Conflict
+                } else {
+                    ReviewError::Persistence
+                }
+            })
     }
 
     pub(crate) async fn reject(
@@ -522,12 +612,20 @@ impl ReviewService {
 
     pub(crate) async fn withdraw(
         &self,
+        item_id: Uuid,
         record_id: Uuid,
+        lock_version: u32,
         actor_user_id: Uuid,
         reason: Option<AuditReason>,
-    ) -> Result<bool, ReviewError> {
+    ) -> Result<SaveReviewOutcome, ReviewError> {
         self.db
-            .withdraw_talent_record(record_id, actor_user_id, reason.or(Some(AuditReason::Withdrawn)))
+            .withdraw_talent_record(
+                item_id,
+                record_id,
+                lock_version,
+                actor_user_id,
+                reason.or(Some(AuditReason::Withdrawn)),
+            )
             .await
             .map_err(|_| ReviewError::Persistence)
     }
@@ -539,6 +637,20 @@ impl ReviewService {
         self.db
             .set_talent_auto_publish(false, actor_user_id)
             .await
+            .map_err(|_| ReviewError::Persistence)
+    }
+
+    pub(crate) async fn set_source_status(
+        &self,
+        source_id: Uuid,
+        trust_status: SourceTrust,
+        actor_user_id: Uuid,
+    ) -> Result<bool, ReviewError> {
+        let auto_publish_enabled = trust_status == SourceTrust::Trusted;
+        self.db
+            .set_talent_source_status(source_id, trust_status, actor_user_id, auto_publish_enabled)
+            .await
+            .map(|status| status.is_some())
             .map_err(|_| ReviewError::Persistence)
     }
 
@@ -602,6 +714,40 @@ impl ReviewService {
             _ => crate::talent::RuleHints::default(),
         };
         Ok((validated, hints))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ReviewFields {
+    pub title: String,
+    pub city: String,
+    pub district: String,
+    pub roles: String,
+    pub skills: String,
+}
+
+fn split_review_list(value: &str) -> Vec<String> {
+    value
+        .split([',', '，', '、'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) struct PrivateReviewDetail {
+    pub item: TalentReviewItem,
+    pub raw_fragment: String,
+}
+
+impl fmt::Debug for PrivateReviewDetail {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PrivateReviewDetail")
+            .field("item", &self.item)
+            .field("raw_fragment", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -1099,6 +1245,88 @@ mod tests {
             });
         let review = ReviewService::new(Arc::new(db), crypto);
 
-        assert!(review.publish(item_id, actor_id).await.unwrap().created);
+        assert!(review.publish(item_id, 4, actor_id).await.unwrap().created);
+    }
+
+    #[tokio::test]
+    async fn stale_manual_publish_is_rejected_before_revalidation_or_persistence() {
+        let item_id = Uuid::new_v4();
+        let actor_id = Uuid::new_v4();
+        let mut item = review_item_fixture(item_id);
+        item.lock_version = 9;
+        let mut db = MockDB::new();
+        db.expect_get_talent_review_item()
+            .times(1)
+            .return_once(move |_| Ok(Some(item)));
+        db.expect_find_talent_duplicate_candidates().never();
+        db.expect_save_talent_review().never();
+        db.expect_publish_talent_item().never();
+        let review = ReviewService::new(Arc::new(db), crypto());
+
+        assert_eq!(
+            review.publish(item_id, 8, actor_id).await.unwrap_err(),
+            super::ReviewError::Conflict
+        );
+    }
+
+    #[tokio::test]
+    async fn withdrawal_threads_the_item_version_to_the_atomic_database_operation() {
+        let item_id = Uuid::new_v4();
+        let record_id = Uuid::new_v4();
+        let actor_id = Uuid::new_v4();
+        let mut db = MockDB::new();
+        db.expect_withdraw_talent_record()
+            .times(1)
+            .withf(move |actual_item, actual_record, version, actual_actor, reason| {
+                *actual_item == item_id
+                    && *actual_record == record_id
+                    && *version == 12
+                    && *actual_actor == actor_id
+                    && *reason == Some(crate::db::talent::AuditReason::Withdrawn)
+            })
+            .returning(|_, _, _, _, _| Ok(SaveReviewOutcome::Saved { lock_version: 13 }));
+        let review = ReviewService::new(Arc::new(db), crypto());
+
+        assert_eq!(
+            review.withdraw(item_id, record_id, 12, actor_id, None).await.unwrap(),
+            SaveReviewOutcome::Saved { lock_version: 13 }
+        );
+    }
+
+    fn review_item_fixture(item_id: Uuid) -> TalentReviewItem {
+        TalentReviewItem {
+            item_id,
+            batch_id: Uuid::new_v4(),
+            position: 0,
+            raw_fragment_ciphertext: None,
+            encryption_key_version: Some(1),
+            contact_candidates_ciphertext: None,
+            contact_hashes: Vec::new(),
+            contact_masked: Some(serde_json::json!([])),
+            normalized_fingerprint: None,
+            kind: TalentKind::Hiring,
+            status: ImportItemStatus::NeedsReview,
+            extraction: Some(serde_json::json!({})),
+            extraction_confidence: Some(0.5),
+            validation_errors: Some(serde_json::json!([])),
+            risk_score: Some(0.0),
+            risk_level: Some(crate::talent::RiskLevel::Low),
+            risk_reasons: Some(serde_json::json!([])),
+            duplicate_candidates: Some(serde_json::json!([])),
+            published_record_id: None,
+            lock_version: 0,
+            processed_at: Some(Utc::now()),
+            reviewed_at: None,
+            updated_at: Utc::now(),
+            model_provider: None,
+            model_name: None,
+            prompt_version: None,
+            source_id: Uuid::new_v4(),
+            source_type: SourceType::Web,
+            source_name: "fictional source".to_owned(),
+            source_trust_status: SourceTrust::New,
+            source_auto_publish_enabled: false,
+            source_confirmed_at: None,
+        }
     }
 }

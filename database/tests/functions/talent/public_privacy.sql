@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(14);
 
 \set moderatorId '00000000-0000-0000-0000-000000000701'
 \set sourceId '00000000-0000-0000-0000-000000000711'
@@ -143,7 +143,8 @@ select unlike(
 
 select throws_ok(
     format(
-        $$select withdraw_talent_record(%L::uuid, %L::uuid, 'fictional_complete_contact_704')$$,
+        $$select withdraw_talent_record(%L::uuid, %L::uuid, 1, %L::uuid, 'fictional_complete_contact_704')$$,
+        :'itemId',
         :'published_record_id',
         :'moderatorId'
     ),
@@ -152,9 +153,28 @@ select throws_ok(
     'withdrawal audit reason rejects a plausible complete contact'
 );
 
+select is(
+    withdraw_talent_record(
+        :'itemId',
+        :'published_record_id',
+        0,
+        :'moderatorId',
+        'withdrawn'
+    ),
+    null::integer,
+    'stale withdrawal is rejected without changing the public record'
+);
+
+select is(
+    (select status from talent_records where record_id = :'published_record_id'),
+    'published',
+    'stale withdrawal leaves the record published'
+);
+
 select lives_ok(
     format(
-        $$select withdraw_talent_record(%L::uuid, %L::uuid, 'withdrawn')$$,
+        $$select withdraw_talent_record(%L::uuid, %L::uuid, 1, %L::uuid, 'withdrawn')$$,
+        :'itemId',
         :'published_record_id',
         :'moderatorId'
     ),
@@ -165,6 +185,34 @@ select is(
     jsonb_array_length(list_published_talent_records(null, 50)),
     0,
     'withdrawal hides the record from public results'
+);
+
+select is(
+    withdraw_talent_record(
+        :'itemId',
+        :'published_record_id',
+        2,
+        :'moderatorId',
+        'withdrawn'
+    ),
+    2,
+    'repeating a withdrawal with the current version is idempotent'
+);
+
+select is(
+    (select lock_version from talent_import_items where item_id = :'itemId'),
+    2,
+    'repeating a withdrawal does not advance the item version'
+);
+
+select is(
+    (
+        select count(*)
+        from talent_review_events
+        where item_id = :'itemId' and action = 'withdrawn'
+    ),
+    1::bigint,
+    'repeating a withdrawal does not create another audit event'
 );
 
 select * from finish();

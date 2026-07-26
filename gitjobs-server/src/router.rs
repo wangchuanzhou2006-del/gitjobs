@@ -336,6 +336,51 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
             get(dashboard::moderator::talent::import::page)
                 .post(dashboard::moderator::talent::import::create),
         )
+        .route("/talent/review", get(dashboard::moderator::talent::review::queue))
+        .route(
+            "/talent/review/{item_id}",
+            get(dashboard::moderator::talent::review::detail),
+        )
+        .route(
+            "/talent/review/{item_id}/publish",
+            post(dashboard::moderator::talent::review::publish)
+                .put(dashboard::moderator::talent::review::publish),
+        )
+        .route(
+            "/talent/review/{item_id}/save",
+            post(dashboard::moderator::talent::review::save)
+                .put(dashboard::moderator::talent::review::save),
+        )
+        .route(
+            "/talent/review/{item_id}/merge",
+            post(dashboard::moderator::talent::review::merge)
+                .put(dashboard::moderator::talent::review::merge),
+        )
+        .route(
+            "/talent/review/{item_id}/reject",
+            post(dashboard::moderator::talent::review::reject)
+                .put(dashboard::moderator::talent::review::reject),
+        )
+        .route(
+            "/talent/review/{item_id}/reprocess",
+            post(dashboard::moderator::talent::review::reprocess)
+                .put(dashboard::moderator::talent::review::reprocess),
+        )
+        .route(
+            "/talent/review/{item_id}/withdraw",
+            post(dashboard::moderator::talent::review::withdraw)
+                .put(dashboard::moderator::talent::review::withdraw),
+        )
+        .route(
+            "/talent/auto-publish/pause",
+            post(dashboard::moderator::talent::review::pause)
+                .put(dashboard::moderator::talent::review::pause),
+        )
+        .route(
+            "/talent/sources/{source_id}/status",
+            post(dashboard::moderator::talent::review::source_status)
+                .put(dashboard::moderator::talent::review::source_status),
+        )
         .route(
             "/jobs/{employer_id}/{job_id}/preview",
             get(dashboard::moderator::jobs::preview_page),

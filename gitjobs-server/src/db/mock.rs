@@ -355,10 +355,12 @@ mock! {
         ) -> Result<crate::db::talent::SaveReviewOutcome>;
         async fn withdraw_talent_record(
             &self,
+            item_id: Uuid,
             record_id: Uuid,
+            lock_version: u32,
             actor_user_id: Uuid,
             reason: Option<crate::db::talent::AuditReason>,
-        ) -> Result<bool>;
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
         async fn list_published_talent_records(
             &self,
             kind: Option<crate::talent::TalentKind>,
