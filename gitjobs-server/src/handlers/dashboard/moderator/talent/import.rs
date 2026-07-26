@@ -246,12 +246,15 @@ mod tests {
 
     use crate::{
         db::{mock::MockDB, talent::TalentImportBatchSummary},
-        handlers::tests::{TestRouterBuilder, sample_auth_user, sample_session_record},
+        handlers::tests::{TestRouterBuilder, message_matches, sample_auth_user, sample_session_record},
         notifications::MockNotificationsManager,
         talent::{SourceTrust, SourceType},
     };
 
     use super::MAX_RAW_BYTES;
+
+    const RAW_TEXT_SENTINEL: &str = "FICTIONAL_RAW_TEXT_SENTINEL_9D2F";
+    const SAFE_SUCCESS_MESSAGE: &str = "已收到 1 条信息，正在整理。";
 
     fn user_session(db: &mut MockDB, is_moderator: bool) -> (session::Id, Uuid) {
         let auth_hash = "hash";
@@ -308,6 +311,55 @@ mod tests {
                     .uri("/dashboard/moderator/talent/import")
                     .header(COOKIE, format!("id={session_id}"))
                     .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn anonymous_user_cannot_post_an_import() {
+        let router = TestRouterBuilder::new(MockDB::new(), MockNotificationsManager::new())
+            .build()
+            .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/dashboard/moderator/talent/import")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "source_type=web&source_name=test&raw_text={RAW_TEXT_SENTINEL}"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn non_moderator_user_cannot_post_an_import() {
+        let mut db = MockDB::new();
+        let (session_id, _) = user_session(&mut db, false);
+        let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
+            .build()
+            .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/dashboard/moderator/talent/import")
+                    .header(COOKIE, format!("id={session_id}"))
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "source_type=web&source_name=test&raw_text={RAW_TEXT_SENTINEL}"
+                    )))
                     .unwrap(),
             )
             .await
@@ -440,6 +492,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validation_error_does_not_render_or_persist_submitted_raw_text() {
+        let mut db = MockDB::new();
+        let (session_id, _) = moderator_session(&mut db);
+        db.expect_create_talent_import().never();
+        db.expect_update_session().never();
+        db.expect_list_talent_import_batches()
+            .times(1)
+            .returning(|_| Ok(Vec::new()));
+        let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
+            .build()
+            .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/dashboard/moderator/talent/import")
+                    .header(COOKIE, format!("id={session_id}"))
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "source_type=web&source_name=&raw_text={RAW_TEXT_SENTINEL}"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let html =
+            String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(html.contains("请填写信息来源"));
+        assert!(!html.contains(RAW_TEXT_SENTINEL));
+    }
+
+    #[tokio::test]
     async fn oversized_import_returns_422_without_creating_a_batch() {
         let mut db = MockDB::new();
         let (session_id, _) = moderator_session(&mut db);
@@ -488,6 +575,21 @@ mod tests {
                     && input.items.len() == 1
             })
             .return_once(move |_| Ok(batch_id));
+        db.expect_update_session()
+            .times(1)
+            .withf(|record| {
+                let pending_message_count = record
+                    .data
+                    .get("axum-messages.data")
+                    .and_then(|value| value.get("pending_messages"))
+                    .and_then(|messages| messages.as_array())
+                    .map_or(0, Vec::len);
+                let persisted_session = serde_json::to_string(&record.data).unwrap();
+                pending_message_count == 1
+                    && message_matches(record, SAFE_SUCCESS_MESSAGE)
+                    && !persisted_session.contains(RAW_TEXT_SENTINEL)
+            })
+            .returning(|_| Ok(()));
         let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
             .build()
             .await;
@@ -499,9 +601,9 @@ mod tests {
                     .uri("/dashboard/moderator/talent/import")
                     .header(COOKIE, format!("id={session_id}"))
                     .header("content-type", "application/x-www-form-urlencoded")
-                    .body(Body::from(
-                        "source_type=web&source_name=%E5%85%AC%E5%BC%80%E6%8B%9B%E8%81%98%E9%A1%B5&raw_text=%E6%8B%9B%E8%81%98%E5%88%87%E9%85%8D",
-                    ))
+                    .body(Body::from(format!(
+                        "source_type=web&source_name=%E5%85%AC%E5%BC%80%E6%8B%9B%E8%81%98%E9%A1%B5&raw_text={RAW_TEXT_SENTINEL}"
+                    )))
                     .unwrap(),
             )
             .await
