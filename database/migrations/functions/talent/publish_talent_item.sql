@@ -20,6 +20,7 @@ declare
     v_safety_valid boolean;
     v_hard_block boolean;
     v_high_duplicate boolean;
+    v_fresh_duplicate boolean;
 begin
     select *
     into v_item
@@ -317,6 +318,43 @@ begin
             end
         );
 
+    if p_automatic then
+        -- Serialize all automatic publications sharing an exact dedupe key. The
+        -- lock names are one-way database hashes and are held for this transaction.
+        perform pg_advisory_xact_lock(hashtextextended(dedupe_key, 0))
+        from (
+            select 'talent-contact:' || contact_hash as dedupe_key
+            from unnest(coalesce(v_item.contact_hashes, '{}'::text[])) as hashes(contact_hash)
+            where contact_hash <> ''
+            union
+            select 'talent-fingerprint:' || v_item.normalized_fingerprint
+            where nullif(v_item.normalized_fingerprint, '') is not null
+        ) exact_keys
+        order by dedupe_key;
+
+        select exists (
+            select 1
+            from talent_contacts contact
+            join talent_records record using (record_id)
+            where record.status <> 'withdrawn'
+              and contact.deleted_at is null
+              and contact.normalized_hash = any(coalesce(v_item.contact_hashes, '{}'::text[]))
+            union all
+            select 1
+            from talent_import_items origin
+            join talent_records record
+              on record.record_id = origin.published_record_id
+            where origin.item_id <> v_item.item_id
+              and origin.status in ('published', 'auto_published')
+              and record.status <> 'withdrawn'
+              and nullif(v_item.normalized_fingerprint, '') is not null
+              and origin.normalized_fingerprint = v_item.normalized_fingerprint
+        )
+        into v_fresh_duplicate;
+    else
+        v_fresh_duplicate := false;
+    end if;
+
     if p_automatic and not coalesce((
         v_item.risk_level = 'low'
         and not v_hard_block
@@ -329,6 +367,7 @@ begin
         and v_safety_valid
         and v_required_complete
         and not v_high_duplicate
+        and not v_fresh_duplicate
     ), false) then
         raise exception 'automatic talent publication gates failed' using errcode = '22023';
     end if;
@@ -340,7 +379,9 @@ begin
            or contact ?| array['value', 'complete_contact', 'raw']
            or coalesce(contact->>'contact_type', '') not in ('phone', 'wechat', 'qq', 'other')
            or coalesce(contact->>'ciphertext', '') !~ '^(?:[0-9a-fA-F]{2})+$'
-           or coalesce(nullif(contact->>'encryption_key_version', '')::integer, 0) < 1
+           or coalesce(nullif(contact->>'encryption_key_version', '')::bigint, 0) < 1
+           or coalesce(nullif(contact->>'encryption_key_version', '')::numeric, 0)
+                > 4294967295
            or char_length(coalesce(contact->>'masked_value', '')) > 64
            or coalesce(contact->>'masked_value', '')
                !~ '^[^*[:space:][:cntrl:]]{0,4}\*{3,}[^*[:space:][:cntrl:]]{0,4}$'
@@ -427,7 +468,7 @@ begin
         v_record_id,
         contact->>'contact_type',
         lower(contact->>'ciphertext'),
-        (contact->>'encryption_key_version')::integer,
+        (contact->>'encryption_key_version')::bigint,
         nullif(contact->>'normalized_hash', ''),
         contact->>'masked_value'
     from jsonb_array_elements(p_contacts) as contacts(contact);

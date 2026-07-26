@@ -36,9 +36,9 @@ impl ImportItemStatus {
                 )
                 | (
                     Self::NeedsReview,
-                    Self::Published | Self::Rejected | Self::Merged | Self::Extracting
+                    Self::Published | Self::Rejected | Self::Merged | Self::Queued
                 )
-                | (Self::Rejected | Self::Failed, Self::Extracting)
+                | (Self::Rejected | Self::Failed, Self::Queued)
         )
     }
 }

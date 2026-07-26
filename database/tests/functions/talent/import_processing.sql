@@ -1,5 +1,5 @@
 begin;
-select plan(30);
+select plan(37);
 
 \set sourceCreator '00000000-0000-0000-0000-000000000511'
 
@@ -12,8 +12,122 @@ values (
     'talent_import_creator'
 );
 
+select results_eq(
+    $$
+    select table_name, data_type
+    from information_schema.columns
+    where table_schema = current_schema()
+      and table_name in ('talent_import_batches', 'talent_import_items', 'talent_contacts')
+      and column_name = 'encryption_key_version'
+    order by table_name
+    $$,
+    $$
+    values
+        ('talent_contacts'::text, 'bigint'::text),
+        ('talent_import_batches'::text, 'bigint'::text),
+        ('talent_import_items'::text, 'bigint'::text)
+    $$,
+    'talent encryption key versions store the complete positive u32 range'
+);
+
 select upsert_talent_source('other', 'Synthetic Import Source', :'sourceCreator') as source_id
 \gset
+
+select lives_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f1f2',
+                'encryption_key_version', 4294967295,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'f3f4',
+                        'encryption_key_version', 4294967295,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    'u32 maximum key versions persist through the import function'
+);
+
+select results_eq(
+    $$
+    select batch.encryption_key_version, item.encryption_key_version
+    from talent_import_batches batch
+    join talent_import_items item using (batch_id)
+    where batch.encryption_key_version = 4294967295
+    $$,
+    $$ values (4294967295::bigint, 4294967295::bigint) $$,
+    'u32 maximum key versions round-trip without truncation'
+);
+
+delete from talent_import_items
+where batch_id in (
+    select batch_id
+    from talent_import_batches
+    where encryption_key_version = 4294967295
+);
+delete from talent_import_batches
+where encryption_key_version = 4294967295;
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f5f6',
+                'encryption_key_version', 0,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'f7f8',
+                        'encryption_key_version', 0,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '23514',
+    null,
+    'zero key versions are rejected at the database boundary'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f9fa',
+                'encryption_key_version', 4294967296,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'fbfc',
+                        'encryption_key_version', 4294967296,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '23514',
+    null,
+    'key versions above u32 maximum are rejected at the database boundary'
+);
 
 select lives_ok(
     format(
@@ -558,6 +672,43 @@ select is(
     claim_talent_import_item(),
     null::jsonb,
     'claim returns null when no queued item remains'
+);
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    raw_fragment_ciphertext,
+    encryption_key_version,
+    kind,
+    status,
+    updated_at
+)
+values (
+    '00000000-0000-0000-0000-000000000599',
+    (:'first_claim'::jsonb->>'batch_id')::uuid,
+    999,
+    '9999',
+    1,
+    'hiring',
+    'extracting',
+    current_timestamp - interval '40 seconds'
+);
+
+select is(
+    claim_talent_import_item(),
+    null::jsonb,
+    'claim lease does not steal an active item during the bounded AI retry window'
+);
+
+update talent_import_items
+set updated_at = current_timestamp - interval '3 minutes'
+where item_id = '00000000-0000-0000-0000-000000000599';
+
+select is(
+    claim_talent_import_item()->>'item_id',
+    '00000000-0000-0000-0000-000000000599',
+    'claim lease recovers a stale extracting item after worker interruption'
 );
 
 select * from finish();

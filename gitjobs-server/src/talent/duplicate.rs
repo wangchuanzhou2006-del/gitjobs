@@ -19,7 +19,7 @@ pub(crate) struct DuplicateProbe {
 
 impl DuplicateProbe {
     pub(crate) fn new(extraction: ValidatedExtraction, source_id: Uuid) -> Self {
-        let normalized_text = normalized_text_for_extraction(&extraction.safe);
+        let normalized_text = duplicate_normalized_text(&extraction.safe);
         Self {
             extraction,
             source_id,
@@ -162,7 +162,7 @@ fn normalize(value: &str) -> String {
     value.trim().to_lowercase()
 }
 
-fn normalized_text_for_extraction(extraction: &TalentExtraction) -> String {
+pub(crate) fn duplicate_normalized_text(extraction: &TalentExtraction) -> String {
     extraction
         .title
         .iter()
@@ -173,6 +173,28 @@ fn normalized_text_for_extraction(extraction: &TalentExtraction) -> String {
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub(crate) fn extraction_fingerprint(extraction: &TalentExtraction) -> Option<String> {
+    let normalized = extraction
+        .title
+        .iter()
+        .chain(extraction.roles.iter())
+        .chain(extraction.city.iter())
+        .chain(extraction.district.iter())
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\u{0}");
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(
+        openssl::sha::sha256(normalized.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
 }
 
 #[cfg(test)]

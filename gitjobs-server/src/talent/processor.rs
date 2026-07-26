@@ -14,13 +14,14 @@ use crate::{
     talent::{
         AiError, AutoPublishInput, AutoPublishPolicy, ContactCandidate, DuplicateProbe, DuplicateService,
         EncryptedValue, ExtractionRequest, RiskEngine, RiskInput, RuleEngine, TalentAiProvider, TalentCrypto,
-        TalentExtraction, ValidatedExtraction, ValidationIssue, contact_hash, validate_extraction,
+        TalentExtraction, ValidatedExtraction, ValidationIssue, contact_hash, extraction_fingerprint,
+        validate_extraction,
     },
 };
 
 use super::service::{
-    ReviewError, contacts_aad, encrypt_publication_contacts, fragment_aad, masked_contacts, record_draft,
-    validation_issues,
+    ReviewError, contacts_aad, duplicate_repository_probe, encrypt_publication_contacts, fragment_aad,
+    masked_contacts, record_draft, validation_issues,
 };
 
 const DUPLICATE_LIMIT: u16 = 20;
@@ -186,9 +187,19 @@ impl TalentProcessor {
             claimed.encryption_key_version,
             &validated.contacts,
         )?;
+        let normalized_fingerprint = extraction_fingerprint(&validated.safe);
         let candidates = self
             .db
-            .find_talent_duplicate_candidates(claimed.item_id, DUPLICATE_LIMIT)
+            .find_talent_duplicate_candidates(
+                duplicate_repository_probe(
+                    claimed.item_id,
+                    metadata.source_id,
+                    protected.hashes.clone(),
+                    normalized_fingerprint.clone(),
+                    &validated,
+                ),
+                DUPLICATE_LIMIT,
+            )
             .await
             .map_err(|_| ProcessError::Persistence)?;
         let duplicates = self.duplicate.evaluate(
@@ -229,7 +240,7 @@ impl TalentProcessor {
                 contact_candidates_ciphertext: protected.ciphertext,
                 contact_hashes: protected.hashes,
                 contact_masked: masked,
-                normalized_fingerprint: extraction_fingerprint(&validated.safe),
+                normalized_fingerprint,
                 validation_errors: validation_issues(&validated.issues),
                 risk_score: f32::from(assessment.score),
                 risk_level: assessment.level,
@@ -315,28 +326,6 @@ fn ai_error_code(error: AiError) -> &'static str {
     }
 }
 
-fn extraction_fingerprint(extraction: &TalentExtraction) -> Option<String> {
-    let normalized = extraction
-        .title
-        .iter()
-        .chain(extraction.roles.iter())
-        .chain(extraction.city.iter())
-        .chain(extraction.district.iter())
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("\u{0}");
-    if normalized.is_empty() {
-        return None;
-    }
-    Some(
-        openssl::sha::sha256(normalized.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
-    )
-}
-
 fn map_review_error(error: ReviewError) -> ProcessError {
     match error {
         ReviewError::ProtectedData => ProcessError::ProtectedData,
@@ -359,6 +348,7 @@ mod tests {
 
     use async_trait::async_trait;
     use chrono::Utc;
+    use mockall::Sequence;
     use uuid::Uuid;
 
     use crate::{
@@ -490,34 +480,57 @@ mod tests {
         let encrypted = crypto.encrypt(b"neutral synthetic input", &fragment_aad(0)).unwrap();
         let item_id = Uuid::new_v4();
         let mut db = MockDB::new();
-        db.expect_claim_talent_import_item().times(1).return_once(move || {
-            Ok(Some(ClaimedTalentItem {
-                item_id,
-                batch_id: Uuid::new_v4(),
-                position: 0,
-                raw_fragment_ciphertext: encrypted.bytes,
-                encryption_key_version: 1,
-                kind: TalentKind::Hiring,
-                status: ImportItemStatus::Extracting,
-            }))
-        });
+        let mut sequence = Sequence::new();
+        db.expect_claim_talent_import_item()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_once(move || {
+                Ok(Some(ClaimedTalentItem {
+                    item_id,
+                    batch_id: Uuid::new_v4(),
+                    position: 0,
+                    raw_fragment_ciphertext: encrypted.bytes,
+                    encryption_key_version: 1,
+                    kind: TalentKind::Hiring,
+                    status: ImportItemStatus::Extracting,
+                }))
+            });
         db.expect_get_talent_review_item()
             .times(1)
+            .in_sequence(&mut sequence)
             .return_once(move |_| Ok(Some(metadata(item_id, source_trust))));
         db.expect_find_talent_duplicate_candidates()
             .times(1)
-            .return_once(move |_, _| Ok(duplicates));
-        db.expect_get_talent_runtime_settings().times(1).returning(|| {
-            Ok(TalentRuntimeSettings {
-                auto_publish_enabled: true,
-                updated_by: None,
-                updated_at: Utc::now(),
+            .in_sequence(&mut sequence)
+            .withf(move |probe, limit| {
+                probe.item_id == item_id
+                    && probe.kind == TalentKind::Hiring
+                    && probe.roles == ["Cook"]
+                    && probe.source_id != Uuid::nil()
+                    && !probe.contact_hashes.is_empty()
+                    && probe.normalized_fingerprint.is_some()
+                    && probe.normalized_text == "cook cook test city"
+                    && *limit == 20
             })
-        });
-        db.expect_complete_talent_import_item().times(1).returning(|_| Ok(()));
+            .return_once(move |_, _| Ok(duplicates));
+        db.expect_get_talent_runtime_settings()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|| {
+                Ok(TalentRuntimeSettings {
+                    auto_publish_enabled: true,
+                    updated_by: None,
+                    updated_at: Utc::now(),
+                })
+            });
+        db.expect_complete_talent_import_item()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|_| Ok(()));
         if expect_publish {
             db.expect_publish_talent_item()
                 .times(1)
+                .in_sequence(&mut sequence)
                 .withf(|publication| publication.automatic && publication.actor_user_id.is_none())
                 .returning(|_| {
                     Ok(PublishOutcome {

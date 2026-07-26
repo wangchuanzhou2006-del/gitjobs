@@ -53,7 +53,10 @@ mod tests {
         assert!(ImportItemStatus::Extracting.can_transition_to(ImportItemStatus::NeedsReview));
         assert!(ImportItemStatus::NeedsReview.can_transition_to(ImportItemStatus::Published));
         assert!(ImportItemStatus::NeedsReview.can_transition_to(ImportItemStatus::Rejected));
-        assert!(ImportItemStatus::Rejected.can_transition_to(ImportItemStatus::Extracting));
+        assert!(ImportItemStatus::NeedsReview.can_transition_to(ImportItemStatus::Queued));
+        assert!(ImportItemStatus::Rejected.can_transition_to(ImportItemStatus::Queued));
+        assert!(ImportItemStatus::Failed.can_transition_to(ImportItemStatus::Queued));
+        assert!(!ImportItemStatus::Rejected.can_transition_to(ImportItemStatus::Extracting));
         assert!(!ImportItemStatus::Published.can_transition_to(ImportItemStatus::Extracting));
     }
 

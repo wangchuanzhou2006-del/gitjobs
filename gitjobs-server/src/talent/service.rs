@@ -12,17 +12,18 @@ use crate::{
     db::{
         DynDB,
         talent::{
-            AuditReason, EncryptedTalentContact, MergeTalentImportItem, NewTalentImport, NewTalentImportItem,
-            PublicTalentContact, PublishOutcome, PublishTalentItem, SaveReviewOutcome, SaveTalentReview,
-            TalentRecordDraft, TalentReviewItem, TalentRuntimeSettings, TransitionTalentImportItem,
+            AuditReason, EncryptedTalentContact, ManualPolicyReason, MergeTalentImportItem, NewTalentImport,
+            NewTalentImportItem, PublicTalentContact, PublishOutcome, PublishTalentItem, SaveReviewOutcome,
+            SaveTalentReview, TalentDuplicateProbe, TalentRecordDraft, TalentReviewItem,
+            TalentRuntimeSettings, TransitionTalentImportItem,
         },
     },
     talent::{
         AiError, AutoPublishInput, AutoPublishPolicy, ContactCandidate, DuplicateProbe, DuplicateService,
         EncryptedValue, ExtractionRequest, ImportItemStatus, OpenAiCompatibleProvider, RiskEngine, RiskInput,
-        RuleEngine, SourceType, SplitError, SplitLimits, TalentAiProvider, TalentCrypto, TalentExtraction,
-        TalentKind, ValidatedExtraction, ValidationIssue, contact_hash, mask_contact, split_messages,
-        validate_extraction,
+        RuleEngine, SourceType, SplitError, SplitLimits, TalentAiProvider, TalentCrypto,
+        TalentExtraction, TalentKind, ValidatedExtraction, ValidationIssue, contact_hash,
+        duplicate_normalized_text, extraction_fingerprint, mask_contact, split_messages, validate_extraction,
     },
 };
 
@@ -96,6 +97,17 @@ impl TalentAiProvider for UnavailableTalentAiProvider {
 }
 
 fn crypto_from_config(config: &TalentConfig) -> Result<(Arc<TalentCrypto>, u32)> {
+    let configured_active_version = config
+        .encryption
+        .active_version
+        .as_deref()
+        .map(canonical_key_version)
+        .transpose()
+        .context("talent encryption active version must be a canonical positive integer")?;
+    for version in config.encryption.keys.keys() {
+        canonical_key_version(version)
+            .context("talent encryption key version must be a canonical positive integer")?;
+    }
     if !config.enabled {
         return Ok((
             Arc::new(
@@ -117,9 +129,7 @@ fn crypto_from_config(config: &TalentConfig) -> Result<(Arc<TalentCrypto>, u32)>
         .active_version
         .clone()
         .context("talent encryption active version is required")?;
-    let key_version = active
-        .parse()
-        .context("talent encryption active version must be an integer")?;
+    let key_version = configured_active_version.context("talent encryption active version is required")?;
     let keys = config
         .encryption
         .keys
@@ -135,6 +145,16 @@ fn crypto_from_config(config: &TalentConfig) -> Result<(Arc<TalentCrypto>, u32)>
         .to_owned();
     let crypto = TalentCrypto::new(active, keys, pepper).context("error configuring talent crypto")?;
     Ok((Arc::new(crypto), key_version))
+}
+
+fn canonical_key_version(version: &str) -> Result<u32> {
+    let parsed = version
+        .parse::<u32>()
+        .context("talent encryption key version must be an integer")?;
+    if parsed == 0 || parsed.to_string() != version {
+        anyhow::bail!("talent encryption key version must be canonical and positive");
+    }
+    Ok(parsed)
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -255,21 +275,23 @@ impl ImportService {
                     .crypto
                     .encrypt(fragment.text.as_bytes(), &fragment_aad(fragment.position))
                     .map_err(|_| ImportError::Encryption)?;
+                let encryption_key_version = self.checked_key_version(&encrypted)?;
                 Ok(NewTalentImportItem {
                     position: u32::try_from(fragment.position).map_err(|_| ImportError::InvalidInput)?,
                     raw_fragment_ciphertext: encrypted.bytes,
-                    encryption_key_version: self.checked_key_version(&encrypted)?,
+                    encryption_key_version,
                     kind,
                 })
             })
             .collect::<Result<Vec<_>, ImportError>>()?;
         let fragment_count = items.len();
+        let encryption_key_version = self.checked_key_version(&batch)?;
         let talent_import = NewTalentImport {
             source_type: input.source_type,
             source_name: input.source_name,
             imported_by: Some(actor_id),
             raw_text_ciphertext: batch.bytes,
-            encryption_key_version: self.checked_key_version(&batch)?,
+            encryption_key_version,
             model_provider: self.model_provider.clone(),
             model_name: self.model_name.clone(),
             prompt_version: self.prompt_version.clone(),
@@ -303,7 +325,7 @@ fn map_split_error(_: SplitError) -> ImportError {
 }
 
 fn key_version(value: &EncryptedValue) -> Result<u32, ImportError> {
-    value.key_version.parse().map_err(|_| ImportError::Encryption)
+    canonical_key_version(&value.key_version).map_err(|_| ImportError::Encryption)
 }
 
 pub(crate) const fn batch_aad() -> &'static [u8] {
@@ -369,9 +391,19 @@ impl ReviewService {
     ) -> Result<PublishOutcome, ReviewError> {
         let item = self.review_item(item_id).await?;
         let (validated, hints) = self.revalidate(&item)?;
+        let normalized_fingerprint = extraction_fingerprint(&validated.safe);
         let candidates = self
             .db
-            .find_talent_duplicate_candidates(item.item_id, DUPLICATE_LIMIT)
+            .find_talent_duplicate_candidates(
+                duplicate_repository_probe(
+                    item.item_id,
+                    item.source_id,
+                    item.contact_hashes.clone(),
+                    normalized_fingerprint.clone(),
+                    &validated,
+                ),
+                DUPLICATE_LIMIT,
+            )
             .await
             .map_err(|_| ReviewError::Persistence)?;
         let duplicates = self
@@ -391,7 +423,7 @@ impl ReviewService {
             .get_talent_runtime_settings()
             .await
             .map_err(|_| ReviewError::Persistence)?;
-        let _server_decision = self.policy.decide(AutoPublishInput {
+        let server_decision = self.policy.decide(AutoPublishInput {
             global_enabled: settings.auto_publish_enabled,
             source_trust: item.source_trust_status,
             source_enabled: item.source_auto_publish_enabled,
@@ -419,6 +451,14 @@ impl ReviewService {
                 serde_json::to_value(&assessment.reasons).map_err(|_| ReviewError::InvalidExtraction)?,
             ),
             duplicate_candidates: Some(duplicates),
+            normalized_fingerprint,
+            manual_policy_reasons: Some(
+                server_decision
+                    .reasons
+                    .iter()
+                    .filter_map(|reason| ManualPolicyReason::from_code(&reason.code))
+                    .collect(),
+            ),
         };
         let lock_version = match self.save(save).await? {
             SaveReviewOutcome::Saved { lock_version } => lock_version,
@@ -474,7 +514,7 @@ impl ReviewService {
             item_id,
             lock_version,
             actor_user_id,
-            ImportItemStatus::Extracting,
+            ImportItemStatus::Queued,
             Some(AuditReason::Reprocess),
         )
         .await
@@ -615,9 +655,7 @@ pub(crate) fn encrypt_publication_contacts(
             Ok(EncryptedTalentContact {
                 contact_type: contact.contact_type,
                 ciphertext: encrypted.bytes,
-                encryption_key_version: encrypted
-                    .key_version
-                    .parse()
+                encryption_key_version: canonical_key_version(&encrypted.key_version)
                     .map_err(|_| ReviewError::ProtectedData)?,
                 normalized_hash: Some(contact_hash(crypto, contact).map_err(|_| ReviewError::ProtectedData)?),
                 masked_value: mask_contact(contact.contact_type, &contact.value)
@@ -693,6 +731,29 @@ pub(crate) fn validation_issues(issues: &[ValidationIssue]) -> Value {
     )
 }
 
+pub(crate) fn duplicate_repository_probe(
+    item_id: Uuid,
+    source_id: Uuid,
+    contact_hashes: Vec<String>,
+    normalized_fingerprint: Option<String>,
+    extraction: &ValidatedExtraction,
+) -> TalentDuplicateProbe {
+    TalentDuplicateProbe {
+        item_id,
+        kind: extraction.safe.kind,
+        title: extraction.safe.title.clone(),
+        roles: extraction.safe.roles.clone(),
+        city: extraction.safe.city.clone(),
+        district: extraction.safe.district.clone(),
+        salary_min: extraction.safe.salary_min,
+        salary_max: extraction.safe.salary_max,
+        source_id,
+        contact_hashes,
+        normalized_fingerprint,
+        normalized_text: duplicate_normalized_text(&extraction.safe),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -704,17 +765,30 @@ mod tests {
     };
 
     use async_trait::async_trait;
+    use chrono::Utc;
+    use mockall::Sequence;
     use uuid::Uuid;
 
     use crate::{
-        db::mock::MockDB,
+        config::{SecretValue, TalentConfig, TalentEncryptionConfig},
+        db::{
+            mock::MockDB,
+            talent::{
+                ManualPolicyReason, PublishOutcome, SaveReviewOutcome, TalentReviewItem,
+                TalentRuntimeSettings,
+            },
+        },
         talent::{
-            AiError, ContactCandidate, ContactType, ExtractionRequest, SourceType, SplitLimits,
-            TalentAiProvider, TalentCrypto, TalentExtraction, TalentKind, TalentServices,
+            AiError, ContactCandidate, ContactType, ExtractionRequest, ImportItemStatus, SourceTrust,
+            SourceType, SplitLimits, TalentAiProvider, TalentCrypto, TalentExtraction, TalentKind,
+            TalentServices,
         },
     };
 
-    use super::{ImportError, ImportService, NewImport, batch_aad, fragment_aad, safe_snapshot};
+    use super::{
+        ImportError, ImportService, NewImport, ReviewService, batch_aad, canonical_key_version, contacts_aad,
+        crypto_from_config, fragment_aad, safe_snapshot,
+    };
 
     fn crypto() -> Arc<TalentCrypto> {
         Arc::new(
@@ -844,5 +918,187 @@ mod tests {
         assert_eq!(snapshot["contacts"]["present"], true);
         assert_eq!(snapshot["contacts"]["masked"][0], "138****8000");
         assert!(!snapshot.to_string().contains(complete));
+    }
+
+    #[test]
+    fn key_versions_are_canonical_positive_u32_values() {
+        assert_eq!(canonical_key_version("1").unwrap(), 1);
+        assert_eq!(
+            canonical_key_version(u32::MAX.to_string().as_str()).unwrap(),
+            u32::MAX
+        );
+        for invalid in ["", "0", "01", "+1", "-1", " 1", "4294967296", "version-1"] {
+            assert!(canonical_key_version(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn configured_historic_key_versions_must_also_be_canonical() {
+        let config = TalentConfig {
+            enabled: true,
+            encryption: TalentEncryptionConfig {
+                active_version: Some("2".to_owned()),
+                keys: [
+                    ("2".to_owned(), SecretValue::new("22".repeat(32))),
+                    ("01".to_owned(), SecretValue::new("11".repeat(32))),
+                ]
+                .into_iter()
+                .collect(),
+                contact_pepper: Some(SecretValue::new("synthetic-test-pepper")),
+            },
+            ..TalentConfig::default()
+        };
+
+        assert!(crypto_from_config(&config).is_err());
+    }
+
+    #[tokio::test]
+    async fn reprocess_queues_the_item_for_the_normal_claim_path() {
+        let item_id = Uuid::new_v4();
+        let actor_id = Uuid::new_v4();
+        let mut db = MockDB::new();
+        db.expect_transition_talent_import_item()
+            .times(1)
+            .withf(move |transition| {
+                transition.item_id == item_id
+                    && transition.lock_version == 7
+                    && transition.actor_user_id == actor_id
+                    && transition.next_status == crate::talent::ImportItemStatus::Queued
+            })
+            .returning(|_| Ok(crate::db::talent::SaveReviewOutcome::Saved { lock_version: 8 }));
+        let review = ReviewService::new(Arc::new(db), crypto());
+
+        assert_eq!(
+            review.reprocess(item_id, 7, actor_id).await.unwrap(),
+            crate::db::talent::SaveReviewOutcome::Saved { lock_version: 8 }
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_publish_rechecks_policy_and_audits_fixed_override_reasons() {
+        let item_id = Uuid::new_v4();
+        let actor_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let contact = ContactCandidate {
+            contact_type: ContactType::Wechat,
+            value: "candidate_2026".to_owned(),
+        };
+        let extraction = TalentExtraction {
+            kind: TalentKind::Hiring,
+            confidence: 0.95,
+            title: Some("Cook".to_owned()),
+            city: Some("Test City".to_owned()),
+            salary_min: Some(6_000),
+            salary_max: Some(8_000),
+            roles: vec!["Cook".to_owned()],
+            published_at: Some(Utc::now()),
+            contacts: vec![contact.clone()],
+            ..TalentExtraction::default()
+        };
+        let expected_fingerprint =
+            crate::talent::extraction_fingerprint(&extraction).expect("complete extraction fingerprint");
+        assert_ne!(expected_fingerprint, "b".repeat(64));
+        let crypto = crypto();
+        let protected_contacts = crypto
+            .encrypt_with_version(
+                &serde_json::to_vec(&[contact]).unwrap(),
+                &contacts_aad(item_id),
+                "1",
+            )
+            .unwrap();
+        let mut safe_extraction = serde_json::to_value(&extraction).unwrap();
+        safe_extraction.as_object_mut().unwrap().remove("contacts");
+        let review_item = TalentReviewItem {
+            item_id,
+            batch_id: Uuid::new_v4(),
+            position: 0,
+            raw_fragment_ciphertext: None,
+            encryption_key_version: Some(1),
+            contact_candidates_ciphertext: Some(protected_contacts.bytes),
+            contact_hashes: vec!["a".repeat(64)],
+            contact_masked: None,
+            normalized_fingerprint: Some("b".repeat(64)),
+            kind: TalentKind::Hiring,
+            status: ImportItemStatus::NeedsReview,
+            extraction: Some(safe_extraction),
+            extraction_confidence: Some(0.95),
+            validation_errors: Some(serde_json::json!([])),
+            risk_score: Some(20.0),
+            risk_level: Some(crate::talent::RiskLevel::Low),
+            risk_reasons: Some(serde_json::json!([])),
+            duplicate_candidates: Some(serde_json::json!([])),
+            published_record_id: None,
+            lock_version: 4,
+            processed_at: Some(Utc::now()),
+            reviewed_at: None,
+            updated_at: Utc::now(),
+            model_provider: Some("mock".to_owned()),
+            model_name: Some("mock-model".to_owned()),
+            prompt_version: Some("v1".to_owned()),
+            source_id,
+            source_type: SourceType::WechatGroup,
+            source_name: "synthetic source".to_owned(),
+            source_trust_status: SourceTrust::New,
+            source_auto_publish_enabled: true,
+            source_confirmed_at: Some(Utc::now()),
+        };
+        let mut db = MockDB::new();
+        let mut sequence = Sequence::new();
+        db.expect_get_talent_review_item()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_once(move |_| Ok(Some(review_item)));
+        db.expect_find_talent_duplicate_candidates()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .withf({
+                let expected_fingerprint = expected_fingerprint.clone();
+                move |probe, limit| {
+                    probe.item_id == item_id
+                        && probe.source_id == source_id
+                        && probe.contact_hashes == ["a".repeat(64)]
+                        && probe.normalized_fingerprint.as_deref() == Some(expected_fingerprint.as_str())
+                        && *limit == 20
+                }
+            })
+            .returning(|_, _| Ok(vec![]));
+        db.expect_get_talent_runtime_settings()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|| {
+                Ok(TalentRuntimeSettings {
+                    auto_publish_enabled: true,
+                    updated_by: None,
+                    updated_at: Utc::now(),
+                })
+            });
+        db.expect_save_talent_review()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .withf(move |review| {
+                review.item_id == item_id
+                    && review.actor_user_id == actor_id
+                    && review.normalized_fingerprint.as_deref() == Some(expected_fingerprint.as_str())
+                    && review.manual_policy_reasons == Some(vec![ManualPolicyReason::SourceNotTrusted])
+            })
+            .returning(|_| Ok(SaveReviewOutcome::Saved { lock_version: 5 }));
+        db.expect_publish_talent_item()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .withf(move |publication| {
+                publication.item_id == item_id
+                    && publication.lock_version == 5
+                    && publication.actor_user_id == Some(actor_id)
+                    && !publication.automatic
+            })
+            .returning(|_| {
+                Ok(PublishOutcome {
+                    record_id: Uuid::new_v4(),
+                    created: true,
+                })
+            });
+        let review = ReviewService::new(Arc::new(db), crypto);
+
+        assert!(review.publish(item_id, actor_id).await.unwrap().created);
     }
 }

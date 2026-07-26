@@ -1,94 +1,121 @@
 -- Returns exact and structured candidates without raw text, ciphertext, hashes, or contacts.
+drop function if exists find_talent_duplicate_candidates(uuid, integer);
+
 create or replace function find_talent_duplicate_candidates(
-    p_item_id uuid,
+    p_probe jsonb,
     p_limit integer default 20
 )
 returns jsonb as $$
+begin
+    if p_probe is null or jsonb_typeof(p_probe) <> 'object' then
+        raise exception 'talent duplicate probe must be a JSON object' using errcode = '22023';
+    end if;
+    if not (
+        p_probe ?& array[
+            'item_id',
+            'kind',
+            'title',
+            'roles',
+            'city',
+            'district',
+            'salary_min',
+            'salary_max',
+            'source_id',
+            'contact_hashes',
+            'normalized_fingerprint',
+            'normalized_text'
+        ]
+    ) or exists (
+        select 1
+        from jsonb_object_keys(p_probe) as fields(field)
+        where field <> all(
+            array[
+                'item_id',
+                'kind',
+                'title',
+                'roles',
+                'city',
+                'district',
+                'salary_min',
+                'salary_max',
+                'source_id',
+                'contact_hashes',
+                'normalized_fingerprint',
+                'normalized_text'
+            ]
+        )
+    ) then
+        raise exception 'talent duplicate probe has invalid fields' using errcode = '22023';
+    end if;
+    if jsonb_typeof(p_probe->'item_id') <> 'string'
+       or (p_probe->>'item_id')
+            !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       or jsonb_typeof(p_probe->'source_id') <> 'string'
+       or (p_probe->>'source_id')
+            !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       or jsonb_typeof(p_probe->'kind') <> 'string'
+       or (p_probe->>'kind') not in ('hiring', 'seeking', 'irrelevant', 'uncertain')
+       or jsonb_typeof(p_probe->'title') not in ('string', 'null')
+       or jsonb_typeof(p_probe->'city') not in ('string', 'null')
+       or jsonb_typeof(p_probe->'district') not in ('string', 'null')
+       or jsonb_typeof(p_probe->'salary_min') not in ('number', 'null')
+       or jsonb_typeof(p_probe->'salary_max') not in ('number', 'null')
+       or jsonb_typeof(p_probe->'roles') <> 'array'
+       or jsonb_typeof(p_probe->'contact_hashes') <> 'array'
+       or jsonb_typeof(p_probe->'normalized_fingerprint') not in ('string', 'null')
+       or jsonb_typeof(p_probe->'normalized_text') <> 'string'
+    then
+        raise exception 'talent duplicate probe has invalid field types' using errcode = '22023';
+    end if;
+    if exists (
+        select 1
+        from jsonb_array_elements(p_probe->'roles') as roles(role)
+        where jsonb_typeof(role) <> 'string'
+           or coalesce(role #>> '{}', '') = ''
+    ) or exists (
+        select 1
+        from jsonb_array_elements(p_probe->'contact_hashes') as hashes(hash)
+        where jsonb_typeof(hash) <> 'string'
+           or coalesce(hash #>> '{}', '') = ''
+    ) or (
+        jsonb_typeof(p_probe->'normalized_fingerprint') = 'string'
+        and coalesce(p_probe->>'normalized_fingerprint', '') = ''
+    ) then
+        raise exception 'talent duplicate probe has invalid array entries' using errcode = '22023';
+    end if;
+    if (
+        jsonb_typeof(p_probe->'salary_min') = 'number'
+        and (
+            (p_probe->>'salary_min')::numeric % 1 <> 0
+            or (p_probe->>'salary_min')::numeric not between 0 and 2147483647
+        )
+    ) or (
+        jsonb_typeof(p_probe->'salary_max') = 'number'
+        and (
+            (p_probe->>'salary_max')::numeric % 1 <> 0
+            or (p_probe->>'salary_max')::numeric not between 0 and 2147483647
+        )
+    ) then
+        raise exception 'talent duplicate probe has invalid salary values' using errcode = '22023';
+    end if;
+
+    return (
 with subject as (
     select
-        item.item_id,
-        item.normalized_fingerprint,
-        item.contact_hashes,
-        item.kind,
-        batch.source_id,
-        coalesce(
-            (
-                select jsonb_agg(role #>> '{}')
-                from jsonb_array_elements(
-                    case
-                        when jsonb_typeof(item.extraction->'roles') = 'array'
-                            then item.extraction->'roles'
-                        else '[]'::jsonb
-                    end
-                ) role
-                where jsonb_typeof(role) = 'string'
-            ),
-            '[]'::jsonb
-        ) as roles,
-        case
-            when jsonb_typeof(item.extraction->'city') = 'string'
-                then item.extraction->>'city'
-        end as city,
-        case
-            when jsonb_typeof(item.extraction->'district') = 'string'
-                then item.extraction->>'district'
-        end as district,
-        case
-            when jsonb_typeof(coalesce(
-                item.extraction->'salaryMin',
-                item.extraction->'salary_min'
-            )) = 'number'
-                then coalesce(
-                    item.extraction->>'salaryMin',
-                    item.extraction->>'salary_min'
-                )::integer
-        end as salary_min,
-        case
-            when jsonb_typeof(coalesce(
-                item.extraction->'salaryMax',
-                item.extraction->'salary_max'
-            )) = 'number'
-                then coalesce(
-                    item.extraction->>'salaryMax',
-                    item.extraction->>'salary_max'
-                )::integer
-        end as salary_max,
-        lower(
-            regexp_replace(
-                concat_ws(
-                    ' ',
-                    case
-                        when jsonb_typeof(item.extraction->'title') = 'string'
-                            then item.extraction->>'title'
-                    end,
-                    (
-                        select string_agg(role #>> '{}', ' ')
-                        from jsonb_array_elements(
-                            case
-                                when jsonb_typeof(item.extraction->'roles') = 'array'
-                                    then item.extraction->'roles'
-                                else '[]'::jsonb
-                            end
-                        ) role
-                        where jsonb_typeof(role) = 'string'
-                    ),
-                    case
-                        when jsonb_typeof(item.extraction->'city') = 'string'
-                            then item.extraction->>'city'
-                    end,
-                    case
-                        when jsonb_typeof(item.extraction->'district') = 'string'
-                            then item.extraction->>'district'
-                    end
-                ),
-                '\s+',
-                ' ',
-                'g'
-            )
-        ) as normalized_text
-    from talent_import_items item
-    join talent_import_batches batch using (batch_id)
-    where item.item_id = p_item_id
+        (p_probe->>'item_id')::uuid as item_id,
+        nullif(p_probe->>'normalized_fingerprint', '') as normalized_fingerprint,
+        array(
+            select hash #>> '{}'
+            from jsonb_array_elements(p_probe->'contact_hashes') as hashes(hash)
+        ) as contact_hashes,
+        p_probe->>'kind' as kind,
+        (p_probe->>'source_id')::uuid as source_id,
+        p_probe->'roles' as roles,
+        nullif(p_probe->>'city', '') as city,
+        nullif(p_probe->>'district', '') as district,
+        nullif(p_probe->>'salary_min', '')::integer as salary_min,
+        nullif(p_probe->>'salary_max', '')::integer as salary_max,
+        p_probe->>'normalized_text' as normalized_text
 ),
 item_candidates as (
     select
@@ -372,5 +399,7 @@ from (
     from ranked_candidates
     order by score desc, structured_upper_bound desc, updated_at desc
     limit greatest(0, least(coalesce(p_limit, 20), 100))
-) limited;
-$$ language sql stable;
+) limited
+    );
+end;
+$$ language plpgsql stable;

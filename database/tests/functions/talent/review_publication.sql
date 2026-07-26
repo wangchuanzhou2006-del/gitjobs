@@ -1,5 +1,5 @@
 begin;
-select plan(49);
+select plan(58);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -15,6 +15,7 @@ select plan(49);
 \set gateItemId '00000000-0000-0000-0000-000000000638'
 \set oldStructuredItemId '00000000-0000-0000-0000-000000000639'
 \set targetRecordId '00000000-0000-0000-0000-000000000641'
+\set failedReprocessItemId '00000000-0000-0000-0000-000000000653'
 
 insert into "user" (auth_hash, email, name, user_id, username)
 values
@@ -161,6 +162,42 @@ values (
     :'targetRecordId', 'seeking', 'Existing Synthetic Candidate', 'Test City',
     'published', 'manual_review', current_timestamp
 );
+
+create function pg_temp.talent_duplicate_probe(p_item_id uuid)
+returns jsonb as $$
+    select jsonb_build_object(
+        'item_id', item.item_id,
+        'kind', item.kind,
+        'title', item.extraction->'title',
+        'roles', coalesce(item.extraction->'roles', '[]'::jsonb),
+        'city', item.extraction->'city',
+        'district', item.extraction->'district',
+        'salary_min', item.extraction->'salaryMin',
+        'salary_max', item.extraction->'salaryMax',
+        'source_id', batch.source_id,
+        'contact_hashes', to_jsonb(coalesce(item.contact_hashes, '{}'::text[])),
+        'normalized_fingerprint', to_jsonb(item.normalized_fingerprint),
+        'normalized_text', lower(
+            concat_ws(
+                ' ',
+                item.extraction->>'title',
+                array_to_string(
+                    array(
+                        select jsonb_array_elements_text(
+                            coalesce(item.extraction->'roles', '[]'::jsonb)
+                        )
+                    ),
+                    ' '
+                ),
+                item.extraction->>'city',
+                item.extraction->>'district'
+            )
+        )
+    )
+    from talent_import_items item
+    join talent_import_batches batch using (batch_id)
+    where item.item_id = p_item_id;
+$$ language sql stable;
 
 select is(
     (
@@ -388,14 +425,24 @@ select throws_ok(
 );
 
 select ok(
-    jsonb_array_length(find_talent_duplicate_candidates(:'incompleteItemId', 20)) > 0,
+    jsonb_array_length(
+        find_talent_duplicate_candidates(
+            pg_temp.talent_duplicate_probe(:'incompleteItemId'),
+            20
+        )
+    ) > 0,
     'duplicate lookup returns exact persisted fingerprint candidates'
 );
 
 select ok(
     exists (
         select 1
-        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 20)) candidate
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                pg_temp.talent_duplicate_probe(:'highRiskItemId'),
+                20
+            )
+        ) candidate
         where candidate->>'candidate_item_id' = :'gateItemId'
           and candidate->'roles' = '["Synthetic Role"]'::jsonb
           and candidate->>'city' = 'Test City'
@@ -410,7 +457,12 @@ select ok(
 select ok(
     not exists (
         select 1
-        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 20)) candidate
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                pg_temp.talent_duplicate_probe(:'highRiskItemId'),
+                20
+            )
+        ) candidate
         where candidate ?| array[
             'raw_fragment',
             'raw_fragment_ciphertext',
@@ -420,6 +472,89 @@ select ok(
         ]
     ),
     'duplicate lookup never returns raw or complete contact material'
+);
+
+select ok(
+    exists (
+        select 1
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                jsonb_build_object(
+                    'item_id', '00000000-0000-0000-0000-000000000649',
+                    'kind', 'hiring',
+                    'title', 'New Exact Contact Subject',
+                    'roles', jsonb_build_array('Different Role'),
+                    'city', 'Different City',
+                    'district', null,
+                    'salary_min', 9000,
+                    'salary_max', 10000,
+                    'source_id', :'sourceId',
+                    'contact_hashes', jsonb_build_array('synthetic-high-risk-hash'),
+                    'normalized_fingerprint', 'new-subject-fingerprint',
+                    'normalized_text', 'new exact contact subject'
+                ),
+                20
+            )
+        ) candidate
+        where candidate->>'candidate_item_id' = :'highRiskItemId'
+          and candidate->'reasons' = '["exact_contact_hash"]'::jsonb
+    ),
+    'initial lookup uses computed contact hashes before the subject is persisted'
+);
+
+select ok(
+    exists (
+        select 1
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                jsonb_build_object(
+                    'item_id', '00000000-0000-0000-0000-000000000650',
+                    'kind', 'seeking',
+                    'title', 'New Exact Fingerprint Subject',
+                    'roles', jsonb_build_array('Different Role'),
+                    'city', 'Different City',
+                    'district', null,
+                    'salary_min', null,
+                    'salary_max', null,
+                    'source_id', :'sourceId',
+                    'contact_hashes', jsonb_build_array(),
+                    'normalized_fingerprint', 'synthetic-fingerprint-602',
+                    'normalized_text', 'new exact fingerprint subject'
+                ),
+                20
+            )
+        ) candidate
+        where candidate->>'candidate_item_id' in (:'highRiskItemId', :'incompleteItemId')
+          and candidate->'reasons' = '["exact_fingerprint"]'::jsonb
+    ),
+    'initial lookup uses the computed fingerprint before the subject is persisted'
+);
+
+select ok(
+    exists (
+        select 1
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                jsonb_build_object(
+                    'item_id', '00000000-0000-0000-0000-000000000651',
+                    'kind', 'hiring',
+                    'title', 'New Structured Subject',
+                    'roles', jsonb_build_array('Synthetic Role'),
+                    'city', 'Test City',
+                    'district', null,
+                    'salary_min', 1000,
+                    'salary_max', 2000,
+                    'source_id', :'sourceId',
+                    'contact_hashes', jsonb_build_array(),
+                    'normalized_fingerprint', null,
+                    'normalized_text', 'new structured subject synthetic role test city'
+                ),
+                20
+            )
+        ) candidate
+        where candidate->>'candidate_item_id' = :'highRiskItemId'
+    ),
+    'initial lookup ranks structured candidates from the supplied safe probe'
 );
 
 insert into talent_import_items (
@@ -507,7 +642,12 @@ from generate_series(1, 6) decoy;
 select ok(
     exists (
         select 1
-        from jsonb_array_elements(find_talent_duplicate_candidates(:'highRiskItemId', 3)) candidate
+        from jsonb_array_elements(
+            find_talent_duplicate_candidates(
+                pg_temp.talent_duplicate_probe(:'highRiskItemId'),
+                3
+            )
+        ) candidate
         where candidate->>'candidate_item_id' = :'oldStructuredItemId'
     ),
     'safe structured ranking keeps an old potential high match ahead of newer unrelated rows'
@@ -945,6 +1085,178 @@ select is(
     (get_talent_review_item(:'publishItemId')->>'item_id')::uuid,
     :'publishItemId'::uuid,
     'review detail returns the requested item'
+);
+
+select * from set_talent_source_status(
+    :'sourceId',
+    'trusted',
+    :'secondModeratorId',
+    true
+);
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    raw_fragment_ciphertext,
+    encryption_key_version,
+    contact_candidates_ciphertext,
+    contact_hashes,
+    contact_masked,
+    normalized_fingerprint,
+    kind,
+    status,
+    extraction,
+    extraction_confidence,
+    validation_errors,
+    risk_score,
+    risk_level,
+    risk_reasons,
+    duplicate_candidates,
+    processed_at
+)
+values (
+    '00000000-0000-0000-0000-000000000652',
+    :'batchId',
+    52,
+    '8181',
+    1,
+    '8282',
+    array['synthetic-auto-hash'],
+    '[{"contact_type":"wechat","masked_value":"aut***652"}]'::jsonb,
+    'synthetic-fingerprint-606',
+    'seeking',
+    'needs_review',
+    '{"kind":"seeking","title":"Concurrent Automatic Candidate","city":"Test City","roles":["Synthetic Role"],"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
+    0.96,
+    '[]'::jsonb,
+    5,
+    'low',
+    '[]'::jsonb,
+    '[]'::jsonb,
+    current_timestamp
+);
+
+select throws_ok(
+    $$
+    select * from publish_talent_item(
+        '00000000-0000-0000-0000-000000000652'::uuid,
+        0,
+        null,
+        true,
+        '{}'::jsonb,
+        '[{"contact_type":"wechat","ciphertext":"8282","encryption_key_version":1,"normalized_hash":"synthetic-auto-hash","masked_value":"aut***652"}]'::jsonb
+    )
+    $$,
+    '22023',
+    'automatic talent publication gates failed',
+    'publication rechecks exact duplicates after serializing the dedupe key'
+);
+
+select lives_ok(
+    format(
+        $$select transition_talent_import_item(%L::uuid, 0, 'queued', %L::uuid, 'reprocess')$$,
+        :'rejectedItemId',
+        :'moderatorId'
+    ),
+    'reprocess transitions a reviewed item back to queued'
+);
+
+select results_eq(
+    format(
+        $$
+        select item.status, batch.processed_count
+        from talent_import_items item
+        join talent_import_batches batch using (batch_id)
+        where item.item_id = %L::uuid
+        $$,
+        :'rejectedItemId'
+    ),
+    $$ values ('queued'::text, 7::integer) $$,
+    'reprocess restores the batch counter before another processing attempt'
+);
+
+select is(
+    claim_talent_import_item()->>'item_id',
+    :'rejectedItemId',
+    'reprocessed queued item is claimed by the normal worker path'
+);
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    raw_fragment_ciphertext,
+    encryption_key_version,
+    kind,
+    status,
+    validation_errors,
+    processed_at
+)
+values (
+    :'failedReprocessItemId',
+    :'batchId',
+    53,
+    '8383',
+    1,
+    'uncertain',
+    'failed',
+    '[{"code":"synthetic_failure"}]'::jsonb,
+    current_timestamp
+);
+
+update talent_import_batches
+set processed_count = 8, failed_count = 1, status = 'partially_failed'
+where batch_id = :'batchId';
+
+select results_eq(
+    format(
+        $$
+        with transitioned as (
+            select transition_talent_import_item(
+                %L::uuid,
+                0,
+                'queued',
+                %L::uuid,
+                'reprocess'
+            ) as saved
+        )
+        select item.status, batch.processed_count, batch.failed_count
+        from transitioned
+        join talent_import_items item on item.item_id = %L::uuid
+        join talent_import_batches batch using (batch_id)
+        where transitioned.saved
+        $$,
+        :'failedReprocessItemId',
+        :'moderatorId',
+        :'failedReprocessItemId'
+    ),
+    $$ values ('queued'::text, 7::integer, 0::integer) $$,
+    'reprocessing a failed item also restores the batch failed counter'
+);
+
+select * from update_talent_review_item(
+    :'gateItemId',
+    0,
+    '{"manual_policy_reasons":["source_not_trusted"]}'::jsonb,
+    :'moderatorId'
+);
+
+select results_eq(
+    format(
+        $$
+        select item.lock_version, event.after_snapshot->'manual_policy_reasons'
+        from talent_import_items item
+        join talent_review_events event using (item_id)
+        where item.item_id = %L::uuid
+          and event.action = 'review_updated'
+        order by event.created_at desc
+        limit 1
+        $$,
+        :'gateItemId'
+    ),
+    $$ values (1::integer, '["source_not_trusted"]'::jsonb) $$,
+    'manual policy override reasons are observable as fixed privacy-safe audit codes'
 );
 
 select * from finish();

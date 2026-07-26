@@ -334,7 +334,7 @@ mock! {
         ) -> Result<Option<crate::db::talent::TalentReviewItem>>;
         async fn find_talent_duplicate_candidates(
             &self,
-            item_id: Uuid,
+            probe: crate::db::talent::TalentDuplicateProbe,
             limit: u16,
         ) -> Result<Vec<crate::db::talent::TalentDuplicateCandidate>>;
         async fn save_talent_review(

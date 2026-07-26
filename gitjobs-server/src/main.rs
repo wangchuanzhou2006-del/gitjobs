@@ -68,6 +68,7 @@ async fn main() -> Result<()> {
         LogFormat::Json => ts.json().init(),
         LogFormat::Pretty => ts.init(),
     }
+    workers::install_privacy_safe_panic_hook();
 
     // Setup task tracker and cancellation token for background workers.
     let task_tracker = TaskTracker::new();

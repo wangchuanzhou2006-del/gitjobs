@@ -350,6 +350,42 @@ pub(crate) struct TalentDuplicateCandidate {
     pub high_similarity: bool,
 }
 
+#[derive(Clone, PartialEq, Serialize)]
+pub(crate) struct TalentDuplicateProbe {
+    pub item_id: Uuid,
+    pub kind: TalentKind,
+    pub title: Option<String>,
+    pub roles: Vec<String>,
+    pub city: Option<String>,
+    pub district: Option<String>,
+    pub salary_min: Option<u32>,
+    pub salary_max: Option<u32>,
+    pub source_id: Uuid,
+    pub contact_hashes: Vec<String>,
+    pub normalized_fingerprint: Option<String>,
+    pub normalized_text: String,
+}
+
+impl fmt::Debug for TalentDuplicateProbe {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TalentDuplicateProbe")
+            .field("item_id", &self.item_id)
+            .field("kind", &self.kind)
+            .field("title", &"[REDACTED SAFE TITLE]")
+            .field("roles", &"[REDACTED SAFE ROLES]")
+            .field("city", &"[REDACTED SAFE LOCATION]")
+            .field("district", &"[REDACTED SAFE LOCATION]")
+            .field("salary_min", &self.salary_min)
+            .field("salary_max", &self.salary_max)
+            .field("source_id", &self.source_id)
+            .field("contact_hash_count", &self.contact_hashes.len())
+            .field("normalized_fingerprint", &"[REDACTED]")
+            .field("normalized_text", &"[REDACTED]")
+            .finish()
+    }
+}
+
 impl fmt::Debug for TalentDuplicateCandidate {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -399,6 +435,8 @@ pub(crate) struct SaveTalentReview {
     pub risk_level: Option<RiskLevel>,
     pub risk_reasons: Option<Value>,
     pub duplicate_candidates: Option<Vec<DuplicateCandidate>>,
+    pub normalized_fingerprint: Option<String>,
+    pub manual_policy_reasons: Option<Vec<ManualPolicyReason>>,
 }
 
 impl fmt::Debug for SaveTalentReview {
@@ -417,6 +455,8 @@ impl fmt::Debug for SaveTalentReview {
             .field("risk_level", &self.risk_level)
             .field("risk_reasons", &"[REDACTED SAFE JSON]")
             .field("duplicate_candidates", &"[REDACTED SAFE JSON]")
+            .field("normalized_fingerprint", &"[REDACTED]")
+            .field("manual_policy_reasons", &self.manual_policy_reasons)
             .finish()
     }
 }
@@ -616,6 +656,41 @@ impl<'de> Deserialize<'de> for AuditReason {
 impl fmt::Debug for AuditReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("[REDACTED SAFE AUDIT REASON]")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ManualPolicyReason {
+    GlobalAutoPublishPaused,
+    SourceNotTrusted,
+    SourceAutoPublishPaused,
+    SourceNotConfirmed,
+    RiskVersionMismatch,
+    RiskNotLow,
+    RiskHardBlock,
+    UnsupportedKind,
+    ConfidenceBelowThreshold,
+    MissingRequiredFields,
+    DuplicateHigh,
+}
+
+impl ManualPolicyReason {
+    pub(crate) fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "global_auto_publish_paused" => Some(Self::GlobalAutoPublishPaused),
+            "source_not_trusted" => Some(Self::SourceNotTrusted),
+            "source_auto_publish_paused" => Some(Self::SourceAutoPublishPaused),
+            "source_not_confirmed" => Some(Self::SourceNotConfirmed),
+            "risk_version_mismatch" => Some(Self::RiskVersionMismatch),
+            "risk_not_low" => Some(Self::RiskNotLow),
+            "risk_hard_block" => Some(Self::RiskHardBlock),
+            "unsupported_kind" => Some(Self::UnsupportedKind),
+            "confidence_below_threshold" => Some(Self::ConfidenceBelowThreshold),
+            "missing_required_fields" => Some(Self::MissingRequiredFields),
+            "duplicate_high" => Some(Self::DuplicateHigh),
+            _ => None,
+        }
     }
 }
 
@@ -994,6 +1069,10 @@ struct SaveTalentReviewWire<'a> {
     risk_reasons: Option<&'a Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     duplicate_candidates: Option<&'a Vec<DuplicateCandidate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    normalized_fingerprint: Option<&'a String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manual_policy_reasons: Option<&'a Vec<ManualPolicyReason>>,
 }
 
 impl<'a> From<&'a SaveTalentReview> for SaveTalentReviewWire<'a> {
@@ -1008,6 +1087,8 @@ impl<'a> From<&'a SaveTalentReview> for SaveTalentReviewWire<'a> {
             risk_level: review.risk_level,
             risk_reasons: review.risk_reasons.as_ref(),
             duplicate_candidates: review.duplicate_candidates.as_ref(),
+            normalized_fingerprint: review.normalized_fingerprint.as_ref(),
+            manual_policy_reasons: review.manual_policy_reasons.as_ref(),
         }
     }
 }
@@ -1047,7 +1128,7 @@ pub(crate) trait DBTalent {
     async fn get_talent_review_item(&self, item_id: Uuid) -> Result<Option<TalentReviewItem>>;
     async fn find_talent_duplicate_candidates(
         &self,
-        item_id: Uuid,
+        probe: TalentDuplicateProbe,
         limit: u16,
     ) -> Result<Vec<TalentDuplicateCandidate>>;
     async fn save_talent_review(&self, review: SaveTalentReview) -> Result<SaveReviewOutcome>;
@@ -1195,18 +1276,18 @@ impl DBTalent for PgDB {
             .transpose()
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, probe), err)]
     async fn find_talent_duplicate_candidates(
         &self,
-        item_id: Uuid,
+        probe: TalentDuplicateProbe,
         limit: u16,
     ) -> Result<Vec<TalentDuplicateCandidate>> {
         trace!("db: find talent duplicate candidates");
         let db = self.pool.get().await?;
         let row = db
             .query_one(
-                "select find_talent_duplicate_candidates($1::uuid, $2::integer)::text;",
-                &[&item_id, &i32::from(limit)],
+                "select find_talent_duplicate_candidates($1::jsonb, $2::integer)::text;",
+                &[&Json(&probe), &i32::from(limit)],
             )
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
@@ -1528,8 +1609,8 @@ mod tests {
     };
 
     use super::{
-        AuditReason, ClaimedTalentItemWire, EncryptedTalentContact, MaskedContact, NewTalentImport,
-        NewTalentImportItem, NewTalentImportWire, PublicTalentContact, PublicTalentRecord,
+        AuditReason, ClaimedTalentItemWire, EncryptedTalentContact, ManualPolicyReason, MaskedContact,
+        NewTalentImport, NewTalentImportItem, NewTalentImportWire, PublicTalentContact, PublicTalentRecord,
         SafeTalentExtraction, SaveReviewOutcome, SaveTalentReview, SaveTalentReviewWire,
         TalentDuplicateCandidate,
     };
@@ -1802,7 +1883,7 @@ mod tests {
 
     #[test]
     fn partial_review_wire_omits_fields_that_were_not_updated() {
-        let review = SaveTalentReview {
+        let mut review = SaveTalentReview {
             item_id: Uuid::new_v4(),
             lock_version: 0,
             actor_user_id: Uuid::new_v4(),
@@ -1815,11 +1896,18 @@ mod tests {
             risk_level: None,
             risk_reasons: None,
             duplicate_candidates: None,
+            normalized_fingerprint: None,
+            manual_policy_reasons: None,
         };
 
         let value = serde_json::to_value(SaveTalentReviewWire::from(&review)).unwrap();
 
         assert_eq!(value, json!({}));
+
+        review.manual_policy_reasons = Some(vec![ManualPolicyReason::SourceNotTrusted]);
+        let value = serde_json::to_value(SaveTalentReviewWire::from(&review)).unwrap();
+
+        assert_eq!(value, json!({"manual_policy_reasons": ["source_not_trusted"]}));
     }
 
     #[test]

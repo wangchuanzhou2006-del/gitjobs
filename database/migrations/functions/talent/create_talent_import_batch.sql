@@ -34,7 +34,7 @@ begin
         (p_import->>'source_id')::uuid,
         nullif(p_import->>'imported_by', '')::uuid,
         lower(p_import->>'raw_text_ciphertext'),
-        (p_import->>'encryption_key_version')::integer,
+        (p_import->>'encryption_key_version')::bigint,
         nullif(p_import->>'model_provider', ''),
         nullif(p_import->>'model_name', ''),
         nullif(p_import->>'prompt_version', ''),
@@ -54,7 +54,7 @@ begin
         v_batch_id,
         (item->>'position')::integer,
         lower(item->>'raw_fragment_ciphertext'),
-        (item->>'encryption_key_version')::integer,
+        (item->>'encryption_key_version')::bigint,
         item->>'kind'
     from jsonb_array_elements(v_items) as fragments(item)
     where coalesce(item->>'raw_fragment_ciphertext', '') ~ '^(?:[0-9a-fA-F]{2})+$';

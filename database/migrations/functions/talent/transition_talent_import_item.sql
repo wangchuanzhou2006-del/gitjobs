@@ -9,6 +9,7 @@ create or replace function transition_talent_import_item(
 returns boolean as $$
 declare
     v_status text;
+    v_batch_id uuid;
 begin
     if p_reason is not null
        and p_reason not in (
@@ -24,8 +25,8 @@ begin
         raise exception 'invalid talent audit reason' using errcode = '22023';
     end if;
 
-    select status
-    into v_status
+    select status, batch_id
+    into v_status, v_batch_id
     from talent_import_items
     where item_id = p_item_id
     for update;
@@ -42,8 +43,8 @@ begin
         return false;
     end if;
     if not (
-        (v_status = 'needs_review' and p_next_status in ('rejected', 'extracting'))
-        or (v_status in ('rejected', 'failed') and p_next_status = 'extracting')
+        (v_status = 'needs_review' and p_next_status in ('rejected', 'queued'))
+        or (v_status in ('rejected', 'failed') and p_next_status = 'queued')
     ) then
         raise exception 'invalid talent import item transition' using errcode = '22023';
     end if;
@@ -52,9 +53,26 @@ begin
     set
         status = p_next_status,
         lock_version = lock_version + 1,
-        reviewed_at = current_timestamp,
+        processed_at = case when p_next_status = 'queued' then null else processed_at end,
+        reviewed_at = case when p_next_status = 'queued' then null else current_timestamp end,
         updated_at = current_timestamp
     where item_id = p_item_id;
+
+    if p_next_status = 'queued' then
+        update talent_import_batches
+        set
+            processed_count = processed_count - 1,
+            failed_count = failed_count - case when v_status = 'failed' then 1 else 0 end,
+            status = 'queued',
+            completed_at = null
+        where batch_id = v_batch_id
+          and processed_count > 0
+          and (v_status <> 'failed' or failed_count > 0);
+
+        if not found then
+            raise exception 'talent import batch counters are invalid';
+        end if;
+    end if;
 
     insert into talent_review_events (
         item_id,

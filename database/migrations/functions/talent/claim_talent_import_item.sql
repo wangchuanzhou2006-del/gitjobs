@@ -3,12 +3,21 @@ create or replace function claim_talent_import_item()
 returns jsonb as $$
 declare
     v_item jsonb;
+    v_extracting_lease constant interval := interval '2 minutes';
 begin
     with next_item as (
         select item_id
         from talent_import_items
         where status = 'queued'
-        order by created_at, batch_id, position
+           or (
+               status = 'extracting'
+               and updated_at < current_timestamp - v_extracting_lease
+           )
+        order by
+            case when status = 'queued' then 0 else 1 end,
+            created_at,
+            batch_id,
+            position
         for update skip locked
         limit 1
     )

@@ -26,7 +26,9 @@ begin
                 'risk_score',
                 'risk_level',
                 'risk_reasons',
-                'duplicate_candidates'
+                'duplicate_candidates',
+                'normalized_fingerprint',
+                'manual_policy_reasons'
             ]
         )
     ) then
@@ -291,6 +293,47 @@ begin
         raise exception 'talent review duplicate candidates contain an invalid entry'
             using errcode = '22023';
     end if;
+    if p_updates ? 'manual_policy_reasons'
+       and jsonb_typeof(p_updates->'manual_policy_reasons') <> 'array' then
+        raise exception 'talent review manual policy reasons must be a JSON array'
+            using errcode = '22023';
+    end if;
+    if p_updates ? 'manual_policy_reasons'
+       and exists (
+           select 1
+           from jsonb_array_elements(
+               case
+                   when jsonb_typeof(p_updates->'manual_policy_reasons') = 'array'
+                       then p_updates->'manual_policy_reasons'
+                   else '[]'::jsonb
+               end
+           ) as reasons(reason)
+           where jsonb_typeof(reason) <> 'string'
+              or (reason #>> '{}') not in (
+                  'global_auto_publish_paused',
+                  'source_not_trusted',
+                  'source_auto_publish_paused',
+                  'source_not_confirmed',
+                  'risk_version_mismatch',
+                  'risk_not_low',
+                  'risk_hard_block',
+                  'unsupported_kind',
+                  'confidence_below_threshold',
+                  'missing_required_fields',
+                  'duplicate_high'
+              )
+       ) then
+        raise exception 'talent review manual policy reasons contain an invalid entry'
+            using errcode = '22023';
+    end if;
+    if p_updates ? 'normalized_fingerprint'
+       and (
+           jsonb_typeof(p_updates->'normalized_fingerprint') <> 'string'
+           or (p_updates->>'normalized_fingerprint') !~ '^[0-9a-f]{64}$'
+       ) then
+        raise exception 'talent review normalized fingerprint is invalid'
+            using errcode = '22023';
+    end if;
 
     update talent_import_items as reviewed
     set
@@ -311,6 +354,10 @@ begin
         duplicate_candidates = coalesce(
             p_updates->'duplicate_candidates',
             reviewed.duplicate_candidates
+        ),
+        normalized_fingerprint = coalesce(
+            nullif(p_updates->>'normalized_fingerprint', ''),
+            reviewed.normalized_fingerprint
         ),
         lock_version = reviewed.lock_version + 1,
         reviewed_at = current_timestamp,
@@ -339,7 +386,11 @@ begin
         p_actor_user_id,
         'review_updated',
         jsonb_build_object('lock_version', p_lock_version),
-        jsonb_build_object('lock_version', v_lock_version)
+        jsonb_build_object(
+            'lock_version', v_lock_version,
+            'manual_policy_reasons',
+            coalesce(p_updates->'manual_policy_reasons', '[]'::jsonb)
+        )
     );
 
     item_id := v_item_id;
