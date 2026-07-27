@@ -1,77 +1,83 @@
 <section class="talent-results" aria-labelledby="talent-results-title">
   <header>
-    <p>服务端可读取结果</p>
-    <h2 id="talent-results-title">原型人才与岗位</h2>
-    <p id="talent-status" aria-live="polite">当前展示 8 条招聘机会</p>
+    <p>经过确认后发布</p>
+    <h2 id="talent-results-title">人才与岗位</h2>
+    <p id="talent-status" aria-live="polite">当前展示 {{ hiring_records.len() }} 条招聘机会</p>
   </header>
+  {% if hiring_records.is_empty() && seeking_records.is_empty() %}
+    <div class="talent-empty-state" role="status">
+      <h3>暂时没有可展示的信息</h3>
+      <p>这里只显示经过确认并已发布的人才与岗位信息。</p>
+    </div>
+  {% endif %}
   <div class="talent-card-grid">
     {% for record in hiring_records %}
       <article class="talent-card"
                data-talent-card
                data-talent-id="{{ record.id }}"
                data-talent-mode="hiring">
-        <p>{{ record.scene }} · {{ record.region }} {{ record.district }}</p>
+        <p>{{ record.scene_label() }} · {{ record.region }} {{ record.district }}</p>
         <h3>{{ record.title }}</h3>
         <dl>
           <div>
             <dt>薪资</dt>
             <dd>
-              {{ record.salary_min }}–{{ record.salary_max }} 元/月
+              {{ record.salary_label() }}
             </dd>
           </div>
           <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
           <div>
             <dt>经验</dt>
             <dd>
-              {{ record.experience_years }} 年
+              {{ record.experience_label() }}
             </dd>
           </div>
           <div>
             <dt>工时</dt>
             <dd>
-              {{ record.hours_per_day }} 小时/天
+              {{ record.hours_label() }}
             </dd>
           </div>
           <div>
             <dt>休息</dt>
             <dd>
-              {{ record.rest_days }} 天/月
+              {{ record.rest_days_label() }}
             </dd>
           </div>
           <div>
             <dt>住宿</dt>
             <dd>
-              {{ record.lodging }}
+              {{ record.lodging_label() }}
             </dd>
           </div>
           <div>
             <dt>住房补贴</dt>
             <dd>
-              {{ record.housing_allowance }} 元/月
+              {{ record.housing_allowance_label() }}
             </dd>
           </div>
           <div>
             <dt>到岗</dt>
             <dd>
-              {{ record.availability }}
+              {{ record.availability_label() }}
             </dd>
           </div>
           <div>
             <dt>紧急度</dt>
             <dd>
-              {{ record.urgency }}
+              {{ record.urgency_label() }}
             </dd>
           </div>
           <div>
             <dt>可信度</dt>
             <dd>
-              {{ record.credibility }} / 100（原型字段）
+              {{ record.credibility_label() }}
             </dd>
           </div>
           <div data-talent-supporting-fact>
             <dt>来源</dt>
             <dd>
-              {{ record.source_label }}
+              {{ record.source_label() }}
             </dd>
           </div>
           <div data-talent-supporting-fact>
@@ -97,68 +103,68 @@
                data-talent-card
                data-talent-id="{{ record.id }}"
                data-talent-mode="seeking">
-        <p>{{ record.scene }} · {{ record.region }} {{ record.district }}</p>
+        <p>{{ record.scene_label() }} · {{ record.region }} {{ record.district }}</p>
         <h3>{{ record.title }}</h3>
         <dl>
           <div>
             <dt>期望薪资</dt>
             <dd>
-              {{ record.salary_min }}–{{ record.salary_max }} 元/月
+              {{ record.salary_label() }}
             </dd>
           </div>
           <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
           <div>
             <dt>经验</dt>
             <dd>
-              {{ record.experience_years }} 年
+              {{ record.experience_label() }}
             </dd>
           </div>
           <div>
             <dt>期望工时</dt>
             <dd>
-              {{ record.hours_per_day }} 小时/天
+              {{ record.hours_label() }}
             </dd>
           </div>
           <div>
             <dt>期望休息</dt>
             <dd>
-              {{ record.rest_days }} 天/月
+              {{ record.rest_days_label() }}
             </dd>
           </div>
           <div>
             <dt>住宿</dt>
             <dd>
-              {{ record.lodging }}
+              {{ record.lodging_label() }}
             </dd>
           </div>
           <div>
             <dt>住房补贴</dt>
             <dd>
-              {{ record.housing_allowance }} 元/月
+              {{ record.housing_allowance_label() }}
             </dd>
           </div>
           <div>
             <dt>到岗</dt>
             <dd>
-              {{ record.availability }}
+              {{ record.availability_label() }}
             </dd>
           </div>
           <div>
             <dt>紧急度</dt>
             <dd>
-              {{ record.urgency }}
+              {{ record.urgency_label() }}
             </dd>
           </div>
           <div>
             <dt>可信度</dt>
             <dd>
-              {{ record.credibility }} / 100（原型字段）
+              {{ record.credibility_label() }}
             </dd>
           </div>
           <div data-talent-supporting-fact>
             <dt>来源</dt>
             <dd>
-              {{ record.source_label }}
+              {{ record.source_label() }}
             </dd>
           </div>
           <div data-talent-supporting-fact>

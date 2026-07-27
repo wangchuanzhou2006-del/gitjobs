@@ -2,7 +2,7 @@
 {# djlint:off #}
 {% block document_language %}zh-CN{% endblock document_language %}
 {% block page_title %}AI 餐饮人才匹配工作台{% endblock page_title %}
-{% block page_description %}AI 驱动的餐饮人才匹配界面原型。{% endblock page_description %}
+{% block page_description %}查找经过审核发布的餐饮招聘与求职信息。{% endblock page_description %}
 {% block theme_color %}#071426{% endblock theme_color %}
 {# djlint:on #}
 {% block content %}
@@ -10,7 +10,7 @@
     {% include "platform/components/exploration_rail.html" %}
     <main id="main-content" class="talent-main opportunity-main">
       {% include "platform/components/talent_command_bar.html" %}
-      <p role="note">界面原型数据，不代表真实招聘或求职信息</p>
+      {% if prototype_mode %}<p role="note">界面原型数据，不代表真实招聘或求职信息</p>{% endif %}
       {% include "platform/components/talent_results.html" %}
       {% include "platform/components/talent_detail_drawer.html" %}
       {# djlint:off #}

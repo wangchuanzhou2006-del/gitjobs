@@ -23,53 +23,88 @@ const CONDITION_DIMENSIONS = {
   urgency: "timing",
 };
 
+const locationTerms = (record) => {
+  const terms = Array.isArray(record.locationTerms)
+    ? record.locationTerms
+    : [record.region, record.district];
+  return terms.filter((term) => typeof term === "string" && term.trim());
+};
+
+const matchesLocation = (record, value) =>
+  locationTerms(record).some((term) => term === value || term.includes(value));
+
 const includesRole = (record, role) =>
-  record.title.includes(role) || record.skills.some((skill) => skill.includes(role));
+  (typeof record.title === "string" && record.title.includes(role)) ||
+  (Array.isArray(record.skills) && record.skills.some((skill) => skill.includes(role)));
+
+const hasRoleMeaning = (record) =>
+  (typeof record.title === "string" && record.title.trim()) ||
+  (Array.isArray(record.skills) && record.skills.length);
 
 const evaluate = (record, condition) => {
   const value = condition.value;
-  if (condition.key === "region")
+  if (condition.key === "region") {
+    if (!locationTerms(record).length) return null;
     return [
-      record.region === value,
+      matchesLocation(record, value),
       "地区符合：" + value,
-      "地区不符：需要" + value + "，当前" + record.region,
+      "地区不符：需要" + value + "，当前" + locationTerms(record).join("、"),
     ];
-  if (condition.key === "role")
+  }
+  if (condition.key === "role") {
+    if (
+      !(typeof record.title === "string" && record.title.trim()) &&
+      !(Array.isArray(record.skills) && record.skills.length)
+    )
+      return null;
     return [includesRole(record, value), "岗位符合：" + value, "岗位不符：需要" + value];
+  }
   if (condition.key === "skills") {
+    if (!Array.isArray(record.skills) || !record.skills.length) return null;
     const missing = value.filter((wanted) => !record.skills.some((skill) => skill.includes(wanted)));
     return [missing.length === 0, "技能符合：" + value.join("、"), "技能未满足：" + missing.join("、")];
   }
-  if (condition.key === "salaryMin")
+  if (condition.key === "salaryMin") {
+    if (!Number.isFinite(record.salaryMax)) return null;
     return [
       record.salaryMax >= value,
       "薪资范围达到" + value + "元以上",
       "薪资未达到：需要" + value + "元以上，当前最高" + record.salaryMax + "元",
     ];
-  if (condition.key === "experienceYears")
+  }
+  if (condition.key === "experienceYears") {
+    if (!Number.isFinite(record.experienceYears)) return null;
     return [
       record.experienceYears >= value,
       "经验符合：" + record.experienceYears + "年",
       "经验未满足：需要" + value + "年，当前" + record.experienceYears + "年",
     ];
-  if (condition.key === "restDays")
+  }
+  if (condition.key === "restDays") {
+    if (!Number.isFinite(record.restDays)) return null;
     return [
       record.restDays >= value,
       "月休符合：" + record.restDays + "天",
       "月休未满足：需要" + value + "天，当前" + record.restDays + "天",
     ];
+  }
   if (condition.key === "lodging") {
+    if (typeof record.lodging !== "string" || !record.lodging.trim()) return null;
     const hit = !record.lodging.includes("不提供") && /(提供|需要)/.test(record.lodging);
     return [hit, "住宿偏好符合：可包吃住", "住宿偏好未满足：需要包吃住"];
   }
-  if (condition.key === "availability")
+  if (condition.key === "availability") {
+    if (typeof record.availability !== "string" || !record.availability.trim()) return null;
     return [
       record.availability.includes("随时"),
       "到岗时间符合：可随时到岗",
       "到岗时间未满足：当前" + record.availability,
     ];
-  if (condition.key === "urgency")
+  }
+  if (condition.key === "urgency") {
+    if (typeof record.urgency !== "string" || !record.urgency.trim()) return null;
     return [/(较高|急)/.test(record.urgency), "紧急度符合：急招急聘", "紧急度未满足：当前" + record.urgency];
+  }
   return null;
 };
 
@@ -103,7 +138,8 @@ export const parseTalentCommand = (input, mode) => {
 };
 
 export const scoreTalentRecord = (record, conditions) => {
-  if (conditions.length === 0) return { score: null, reasons: [], misses: [], risks: record.riskFlags };
+  const risks = Array.isArray(record.riskFlags) ? record.riskFlags : [];
+  if (conditions.length === 0) return { score: null, reasons: [], misses: [], risks };
   let activeWeight = 0;
   let hitWeight = 0;
   const reasons = [];
@@ -130,16 +166,20 @@ export const scoreTalentRecord = (record, conditions) => {
     score: activeWeight ? Math.round((hitWeight / activeWeight) * 100) : null,
     reasons,
     misses,
-    risks: record.riskFlags,
+    risks,
   };
 };
 
 const hasHardConflict = (record, conditions) =>
   conditions.some(
     (condition) =>
-      (condition.key === "region" && record.region !== condition.value) ||
-      (condition.key === "role" && !includesRole(record, condition.value)) ||
-      (condition.key === "salaryMin" && record.salaryMax < condition.value),
+      (condition.key === "region" &&
+        locationTerms(record).length > 0 &&
+        !matchesLocation(record, condition.value)) ||
+      (condition.key === "role" && hasRoleMeaning(record) && !includesRole(record, condition.value)) ||
+      (condition.key === "salaryMin" &&
+        Number.isFinite(record.salaryMax) &&
+        record.salaryMax < condition.value),
   );
 
 export const filterAndRankTalent = (records, conditions) =>
@@ -149,7 +189,7 @@ export const filterAndRankTalent = (records, conditions) =>
     .sort(
       (left, right) =>
         (right.match.score ?? -1) - (left.match.score ?? -1) ||
-        right.record.credibility - left.record.credibility ||
+        (right.record.credibility ?? -1) - (left.record.credibility ?? -1) ||
         left.index - right.index,
     )
     .map(({ record, match }) => ({ record, match }));

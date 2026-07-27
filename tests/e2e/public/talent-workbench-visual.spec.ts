@@ -1,5 +1,16 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { navigateWithRetries } from "../shared/helpers";
+
+const expectVisualFixtureDataset = async (page: Page) => {
+  const records = await page.locator("#talent-data").evaluate((node) => {
+    const data = JSON.parse(node.textContent || "");
+    return [...data.hiring, ...data.seeking];
+  });
+  expect(records.length).toBeGreaterThan(0);
+  expect(records.every((record) => record.prototype === true)).toBe(true);
+  await expect(page.getByRole("note")).toContainText("界面原型数据");
+};
 
 const rgb = (value: string) =>
   (value.match(/[\d.]+/g) ?? [])
@@ -16,9 +27,10 @@ const contrast = (a: string, b: string) =>
   (Math.min(luminance(a), luminance(b)) + 0.05);
 
 test.describe("talent workbench visual contract", () => {
-  test.beforeEach(async ({ page }) =>
-    navigateWithRetries(page, "/talent", "talent visual"),
-  );
+  test.beforeEach(async ({ page }) => {
+    await navigateWithRetries(page, "/talent", "talent visual");
+    await expectVisualFixtureDataset(page);
+  });
 
   test("shared navigation marks talent and keeps five mobile destinations", async ({
     page,
@@ -129,6 +141,7 @@ test.describe("talent workbench visual contract", () => {
     });
     const page = await context.newPage();
     await navigateWithRetries(page, "/talent", "reduced talent");
+    await expectVisualFixtureDataset(page);
     const card = page.locator("[data-talent-card]:visible").first();
     await expect(card.locator("dl")).toBeVisible();
     const values = await card.evaluate((node) => {
