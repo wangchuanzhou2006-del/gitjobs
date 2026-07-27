@@ -12,6 +12,7 @@ returns integer as $$
 declare
     v_item talent_import_items%rowtype;
     v_source_id uuid;
+    v_record_status text;
 begin
     if p_reason is not null
        and p_reason not in (
@@ -36,13 +37,26 @@ begin
     if not found then
         raise exception 'talent import item not found';
     end if;
-    if v_item.lock_version <> p_lock_version then
-        return null;
-    end if;
     if v_item.published_record_id is distinct from p_record_id
        or v_item.status not in ('published', 'auto_published') then
         raise exception 'talent withdrawal target does not match published item'
             using errcode = '22023';
+    end if;
+
+    select source_id, status
+    into v_source_id, v_record_status
+    from talent_records
+    where record_id = p_record_id
+    for update;
+
+    if not found then
+        raise exception 'talent record not found';
+    end if;
+    if v_record_status = 'withdrawn' then
+        return v_item.lock_version;
+    end if;
+    if v_item.lock_version <> p_lock_version then
+        return null;
     end if;
 
     update talent_records
@@ -53,16 +67,6 @@ begin
     where record_id = p_record_id
       and status <> 'withdrawn'
     returning source_id into v_source_id;
-
-    if not found then
-        if exists (
-            select 1 from talent_records
-            where record_id = p_record_id and status = 'withdrawn'
-        ) then
-            return v_item.lock_version;
-        end if;
-        raise exception 'talent record not found';
-    end if;
 
     insert into talent_review_events (
         item_id,

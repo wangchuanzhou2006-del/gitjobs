@@ -373,14 +373,16 @@ mock! {
             &self,
             enabled: bool,
             actor_user_id: Uuid,
-        ) -> Result<crate::db::talent::TalentRuntimeSettings>;
+            expected_updated_at: DateTime<Utc>,
+        ) -> Result<crate::db::talent::ResourceUpdateOutcome<crate::db::talent::TalentRuntimeSettings>>;
         async fn set_talent_source_status(
             &self,
             source_id: Uuid,
             trust_status: crate::talent::SourceTrust,
             actor_user_id: Uuid,
             auto_publish_enabled: bool,
-        ) -> Result<Option<crate::db::talent::TalentSourceStatus>>;
+            expected_updated_at: DateTime<Utc>,
+        ) -> Result<crate::db::talent::ResourceUpdateOutcome<crate::db::talent::TalentSourceStatus>>;
         async fn cleanup_talent_raw_data(
             &self,
             now: DateTime<Utc>,

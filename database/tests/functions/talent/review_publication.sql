@@ -1,5 +1,5 @@
 begin;
-select plan(63);
+select plan(69);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -834,7 +834,47 @@ select throws_ok(
 );
 
 update talent_import_items set duplicate_candidates = '[]'::jsonb where item_id = :'gateItemId';
-select * from set_talent_auto_publish(false, :'moderatorId') \gset paused_global_
+select updated_at as global_expected_updated_at
+from talent_runtime_settings
+where singleton
+\gset
+
+select set_talent_auto_publish(
+    false,
+    :'moderatorId',
+    :'global_expected_updated_at'
+) as paused_global_outcome
+\gset
+
+select is(
+    :'paused_global_outcome'::jsonb->>'outcome',
+    'updated',
+    'global pause accepts the current runtime settings token'
+);
+
+select updated_at as global_paused_updated_at
+from talent_runtime_settings
+where singleton
+\gset
+
+select set_talent_auto_publish(
+    true,
+    :'secondModeratorId',
+    :'global_expected_updated_at'
+) as stale_global_outcome
+\gset
+
+select is(
+    :'stale_global_outcome'::jsonb->>'outcome',
+    'conflict',
+    'global auto-publish rejects a stale runtime settings token'
+);
+
+select is(
+    (select updated_at from talent_runtime_settings where singleton),
+    :'global_paused_updated_at'::timestamptz,
+    'stale global auto-publish leaves the resource token unchanged'
+);
 
 select throws_ok(
     format(
@@ -846,7 +886,12 @@ select throws_ok(
     'global pause blocks automatic publication'
 );
 
-select * from set_talent_auto_publish(true, :'moderatorId') \gset resumed_global_
+select set_talent_auto_publish(
+    true,
+    :'moderatorId',
+    (select updated_at from talent_runtime_settings where singleton)
+) as resumed_global_outcome
+\gset
 update talent_sources set auto_publish_enabled = false where source_id = :'sourceId';
 
 select throws_ok(
@@ -1068,18 +1113,58 @@ select is(
     'rollback leaves no formal record'
 );
 
-select * from set_talent_source_status(
+select updated_at as source_expected_updated_at
+from talent_sources
+where source_id = :'sourceId'
+\gset
+
+select set_talent_source_status(
     :'sourceId',
     'trusted',
     :'secondModeratorId',
-    true
+    true,
+    :'source_expected_updated_at'
 )
-\gset trusted_source_
+as trusted_source_outcome
+\gset
+
+select is(
+    :'trusted_source_outcome'::jsonb->>'outcome',
+    'updated',
+    'source trust accepts the current source token'
+);
+
+select updated_at as trusted_source_updated_at
+from talent_sources
+where source_id = :'sourceId'
+\gset
+
+select set_talent_source_status(
+    :'sourceId',
+    'blocked',
+    :'moderatorId',
+    false,
+    :'source_expected_updated_at'
+) as stale_source_outcome
+\gset
+
+select is(
+    :'stale_source_outcome'::jsonb->>'outcome',
+    'conflict',
+    'source trust rejects a stale source token'
+);
+
+select is(
+    (select updated_at from talent_sources where source_id = :'sourceId'),
+    :'trusted_source_updated_at'::timestamptz,
+    'stale source trust leaves the resource token unchanged'
+);
 
 select throws_ok(
     format(
-        $$select * from set_talent_source_status(%L::uuid, 'trusted', null, true)$$,
-        :'sourceId'
+        $$select set_talent_source_status(%L::uuid, 'trusted', null, true, %L::timestamptz)$$,
+        :'sourceId',
+        :'trusted_source_updated_at'
     ),
     '22023',
     'trusted talent source requires a Moderator confirmer',
@@ -1107,9 +1192,10 @@ select * from set_talent_source_status(
     :'sourceId',
     'watchlist',
     :'secondModeratorId',
-    true
+    true,
+    (select updated_at from talent_sources where source_id = :'sourceId')
 )
-\gset watchlist_source_
+\gset
 
 select is(
     (select auto_publish_enabled from talent_sources where source_id = :'sourceId'),
@@ -1121,9 +1207,10 @@ select * from set_talent_source_status(
     :'sourceId',
     'blocked',
     :'secondModeratorId',
-    true
+    true,
+    (select updated_at from talent_sources where source_id = :'sourceId')
 )
-\gset blocked_source_
+\gset
 
 select is(
     (select auto_publish_enabled from talent_sources where source_id = :'sourceId'),
@@ -1147,7 +1234,8 @@ select * from set_talent_source_status(
     :'sourceId',
     'trusted',
     :'secondModeratorId',
-    true
+    true,
+    (select updated_at from talent_sources where source_id = :'sourceId')
 );
 
 insert into talent_import_items (

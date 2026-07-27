@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use chrono::{TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
@@ -13,9 +13,9 @@ use crate::{
         DynDB,
         talent::{
             AuditReason, EncryptedTalentContact, ManualPolicyReason, MergeTalentImportItem, NewTalentImport,
-            NewTalentImportItem, PublicTalentContact, PublishOutcome, PublishTalentItem, SaveReviewOutcome,
-            SaveTalentReview, TalentDuplicateProbe, TalentRecordDraft, TalentReviewItem,
-            TalentRuntimeSettings, TransitionTalentImportItem,
+            NewTalentImportItem, PublicTalentContact, PublishOutcome, PublishTalentItem,
+            ResourceUpdateOutcome, SaveReviewOutcome, SaveTalentReview, TalentDuplicateProbe,
+            TalentRecordDraft, TalentReviewItem, TalentRuntimeSettings, TransitionTalentImportItem,
         },
     },
     talent::{
@@ -391,6 +391,11 @@ impl ReviewService {
 
     pub(crate) async fn detail(&self, item_id: Uuid) -> Result<PrivateReviewDetail, ReviewError> {
         let item = self.review_item(item_id).await?;
+        let runtime_settings = self
+            .db
+            .get_talent_runtime_settings()
+            .await
+            .map_err(|_| ReviewError::Persistence)?;
         let raw_fragment = match (&item.raw_fragment_ciphertext, item.encryption_key_version) {
             (Some(bytes), Some(version)) => {
                 let position = usize::try_from(item.position).map_err(|_| ReviewError::InvalidState)?;
@@ -408,7 +413,11 @@ impl ReviewService {
             }
             _ => String::new(),
         };
-        Ok(PrivateReviewDetail { item, raw_fragment })
+        Ok(PrivateReviewDetail {
+            item,
+            raw_fragment,
+            runtime_settings,
+        })
     }
 
     pub(crate) async fn save(&self, review: SaveTalentReview) -> Result<SaveReviewOutcome, ReviewError> {
@@ -632,26 +641,45 @@ impl ReviewService {
 
     pub(crate) async fn pause_auto_publish(
         &self,
+        expected_updated_at: DateTime<Utc>,
         actor_user_id: Uuid,
     ) -> Result<TalentRuntimeSettings, ReviewError> {
-        self.db
-            .set_talent_auto_publish(false, actor_user_id)
+        match self
+            .db
+            .set_talent_auto_publish(false, actor_user_id, expected_updated_at)
             .await
-            .map_err(|_| ReviewError::Persistence)
+            .map_err(|_| ReviewError::Persistence)?
+        {
+            ResourceUpdateOutcome::Updated(settings) => Ok(settings),
+            ResourceUpdateOutcome::Conflict => Err(ReviewError::Conflict),
+            ResourceUpdateOutcome::NotFound => Err(ReviewError::Persistence),
+        }
     }
 
     pub(crate) async fn set_source_status(
         &self,
         source_id: Uuid,
         trust_status: SourceTrust,
+        expected_updated_at: DateTime<Utc>,
         actor_user_id: Uuid,
     ) -> Result<bool, ReviewError> {
         let auto_publish_enabled = trust_status == SourceTrust::Trusted;
-        self.db
-            .set_talent_source_status(source_id, trust_status, actor_user_id, auto_publish_enabled)
+        match self
+            .db
+            .set_talent_source_status(
+                source_id,
+                trust_status,
+                actor_user_id,
+                auto_publish_enabled,
+                expected_updated_at,
+            )
             .await
-            .map(|status| status.is_some())
-            .map_err(|_| ReviewError::Persistence)
+            .map_err(|_| ReviewError::Persistence)?
+        {
+            ResourceUpdateOutcome::Updated(_) => Ok(true),
+            ResourceUpdateOutcome::Conflict => Err(ReviewError::Conflict),
+            ResourceUpdateOutcome::NotFound => Ok(false),
+        }
     }
 
     async fn transition(
@@ -739,6 +767,7 @@ fn split_review_list(value: &str) -> Vec<String> {
 pub(crate) struct PrivateReviewDetail {
     pub item: TalentReviewItem,
     pub raw_fragment: String,
+    pub runtime_settings: TalentRuntimeSettings,
 }
 
 impl fmt::Debug for PrivateReviewDetail {
@@ -920,8 +949,8 @@ mod tests {
         db::{
             mock::MockDB,
             talent::{
-                ManualPolicyReason, PublishOutcome, SaveReviewOutcome, TalentReviewItem,
-                TalentRuntimeSettings,
+                ManualPolicyReason, PublishOutcome, ResourceUpdateOutcome, SaveReviewOutcome,
+                TalentReviewItem, TalentRuntimeSettings, TalentSourceStatus,
             },
         },
         talent::{
@@ -1187,6 +1216,7 @@ mod tests {
             source_trust_status: SourceTrust::New,
             source_auto_publish_enabled: true,
             source_confirmed_at: Some(Utc::now()),
+            source_updated_at: Utc::now(),
         };
         let mut db = MockDB::new();
         let mut sequence = Sequence::new();
@@ -1293,6 +1323,92 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn resource_updates_thread_their_own_expected_tokens_on_success() {
+        let actor_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let runtime_token = Utc::now();
+        let source_token = runtime_token + chrono::Duration::seconds(1);
+        let updated_runtime_token = source_token + chrono::Duration::seconds(1);
+        let updated_source_token = updated_runtime_token + chrono::Duration::seconds(1);
+        let mut db = MockDB::new();
+        db.expect_set_talent_auto_publish()
+            .times(1)
+            .withf(move |enabled, actor, expected| {
+                !*enabled && *actor == actor_id && *expected == runtime_token
+            })
+            .returning(move |_, _, _| {
+                Ok(ResourceUpdateOutcome::Updated(TalentRuntimeSettings {
+                    auto_publish_enabled: false,
+                    updated_by: Some(actor_id),
+                    updated_at: updated_runtime_token,
+                }))
+            });
+        db.expect_set_talent_source_status()
+            .times(1)
+            .withf(move |source, trust, actor, enabled, expected| {
+                *source == source_id
+                    && *trust == SourceTrust::Watchlist
+                    && *actor == actor_id
+                    && !*enabled
+                    && *expected == source_token
+            })
+            .returning(move |_, _, _, _, _| {
+                Ok(ResourceUpdateOutcome::Updated(TalentSourceStatus {
+                    source_id,
+                    trust_status: SourceTrust::Watchlist,
+                    auto_publish_enabled: false,
+                    confirmed_by: Some(actor_id),
+                    confirmed_at: Some(updated_source_token),
+                    updated_at: updated_source_token,
+                }))
+            });
+        let review = ReviewService::new(Arc::new(db), crypto());
+
+        assert_eq!(
+            review
+                .pause_auto_publish(runtime_token, actor_id)
+                .await
+                .unwrap()
+                .updated_at,
+            updated_runtime_token
+        );
+        assert!(
+            review
+                .set_source_status(source_id, SourceTrust::Watchlist, source_token, actor_id)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_resource_tokens_are_explicit_review_conflicts() {
+        let actor_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let runtime_token = Utc::now();
+        let source_token = runtime_token + chrono::Duration::seconds(1);
+        let mut db = MockDB::new();
+        db.expect_set_talent_auto_publish()
+            .times(1)
+            .returning(|_, _, _| Ok(ResourceUpdateOutcome::Conflict));
+        db.expect_set_talent_source_status()
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(ResourceUpdateOutcome::Conflict));
+        let review = ReviewService::new(Arc::new(db), crypto());
+
+        assert_eq!(
+            review.pause_auto_publish(runtime_token, actor_id).await.unwrap_err(),
+            super::ReviewError::Conflict
+        );
+        assert_eq!(
+            review
+                .set_source_status(source_id, SourceTrust::Blocked, source_token, actor_id)
+                .await
+                .unwrap_err(),
+            super::ReviewError::Conflict
+        );
+    }
+
     fn review_item_fixture(item_id: Uuid) -> TalentReviewItem {
         TalentReviewItem {
             item_id,
@@ -1327,6 +1443,7 @@ mod tests {
             source_trust_status: SourceTrust::New,
             source_auto_publish_enabled: false,
             source_confirmed_at: None,
+            source_updated_at: Utc::now(),
         }
     }
 }

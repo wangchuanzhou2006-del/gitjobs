@@ -91,6 +91,14 @@ pub(crate) struct WithdrawForm {
 #[derive(Debug, Deserialize)]
 pub(crate) struct SourceStatusForm {
     pub status: String,
+    pub expected_updated_at: DateTime<Utc>,
+    pub review_item_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResourceForm {
+    pub expected_updated_at: DateTime<Utc>,
+    pub review_item_id: Uuid,
 }
 
 #[instrument(skip_all, err)]
@@ -182,7 +190,7 @@ pub(crate) async fn publish(
         return Ok(StatusCode::FORBIDDEN.into_response());
     };
     match talent.review.publish(item_id, input.lock_version, user.user_id).await {
-        Ok(_) => Ok(action_success(&headers, "talent-review-published")),
+        Ok(_) => Ok(action_success(&headers, RefreshDestination::Queue)),
         Err(error) => Ok(stage_error(error, "发布", item_id)),
     }
 }
@@ -217,7 +225,12 @@ pub(crate) async fn save(
         Ok(outcome) => outcome,
         Err(error) => return Ok(stage_error(error, "保存", item_id)),
     };
-    Ok(action_outcome(outcome, &headers, item_id, "talent-review-saved"))
+    Ok(action_outcome(
+        outcome,
+        &headers,
+        item_id,
+        RefreshDestination::Detail,
+    ))
 }
 
 #[instrument(skip_all, err)]
@@ -249,7 +262,12 @@ pub(crate) async fn merge(
         Ok(outcome) => outcome,
         Err(error) => return Ok(merge_stage_error(error, item_id)),
     };
-    Ok(action_outcome(outcome, &headers, item_id, "talent-review-merged"))
+    Ok(action_outcome(
+        outcome,
+        &headers,
+        item_id,
+        RefreshDestination::Queue,
+    ))
 }
 
 #[instrument(skip_all, err)]
@@ -275,28 +293,37 @@ pub(crate) async fn withdraw(
         outcome,
         &headers,
         item_id,
-        "talent-review-withdrawn",
+        RefreshDestination::Queue,
     ))
 }
 
 #[instrument(skip_all, err)]
-/// Global settings are not item snapshots, so this action intentionally has no item `lock_version`.
+/// Global settings use their own `updated_at` resource token rather than an item `lock_version`.
 pub(crate) async fn pause(
     auth_session: AuthSession,
     State(talent): State<Arc<TalentServices>>,
     headers: HeaderMap,
+    Form(input): Form<ResourceForm>,
 ) -> Result<Response, HandlerError> {
     let Some(user) = auth_session.user else {
         return Ok(StatusCode::FORBIDDEN.into_response());
     };
-    if talent.review.pause_auto_publish(user.user_id).await.is_err() {
-        return Ok(global_stage_error("暂停自动发布"));
+    match talent
+        .review
+        .pause_auto_publish(input.expected_updated_at, user.user_id)
+        .await
+    {
+        Ok(_) => {}
+        Err(ReviewError::Conflict) => {
+            return Ok(resource_conflict_response(input.review_item_id, "暂停自动发布"));
+        }
+        Err(_) => return Ok(global_stage_error("暂停自动发布")),
     }
-    Ok(action_success(&headers, "talent-auto-publish-paused"))
+    Ok(action_success(&headers, RefreshDestination::Detail))
 }
 
 #[instrument(skip_all, err)]
-/// Source trust is source-scoped, so this action intentionally has no item `lock_version`.
+/// Source trust uses the source's own `updated_at` token rather than an item `lock_version`.
 pub(crate) async fn source_status(
     auth_session: AuthSession,
     State(talent): State<Arc<TalentServices>>,
@@ -313,12 +340,19 @@ pub(crate) async fn source_status(
         "blocked" => SourceTrust::Blocked,
         _ => return Ok(validation_error("来源设置", "请选择有效的来源状态。")),
     };
-    let updated = match talent.review.set_source_status(source_id, status, user.user_id).await {
+    let updated = match talent
+        .review
+        .set_source_status(source_id, status, input.expected_updated_at, user.user_id)
+        .await
+    {
         Ok(updated) => updated,
+        Err(ReviewError::Conflict) => {
+            return Ok(resource_conflict_response(input.review_item_id, "来源设置"));
+        }
         Err(_) => return Ok(global_stage_error("来源设置")),
     };
     if updated {
-        Ok(action_success(&headers, "talent-source-status-updated"))
+        Ok(action_success(&headers, RefreshDestination::Detail))
     } else {
         Ok(StatusCode::NOT_FOUND.into_response())
     }
@@ -354,7 +388,7 @@ pub(crate) async fn reject(
         outcome,
         &headers,
         item_id,
-        "talent-review-rejected",
+        RefreshDestination::Queue,
     ))
 }
 
@@ -381,7 +415,7 @@ pub(crate) async fn reprocess(
         outcome,
         &headers,
         item_id,
-        "talent-review-reprocessed",
+        RefreshDestination::Queue,
     ))
 }
 
@@ -389,17 +423,27 @@ fn action_outcome(
     outcome: SaveReviewOutcome,
     headers: &HeaderMap,
     item_id: Uuid,
-    event: &'static str,
+    destination: RefreshDestination,
 ) -> Response {
     match outcome {
-        SaveReviewOutcome::Saved { .. } => action_success(headers, event),
+        SaveReviewOutcome::Saved { .. } => action_success(headers, destination),
         SaveReviewOutcome::Conflict => conflict_response(item_id),
     }
 }
 
-fn action_success(headers: &HeaderMap, event: &'static str) -> Response {
+#[derive(Debug, Clone, Copy)]
+enum RefreshDestination {
+    Detail,
+    Queue,
+}
+
+fn action_success(headers: &HeaderMap, destination: RefreshDestination) -> Response {
     if is_htmx(headers) {
-        (StatusCode::NO_CONTENT, [("HX-Trigger", event)]).into_response()
+        let trigger = match destination {
+            RefreshDestination::Detail => r#"{"talent-review-refresh":{"destination":"detail"}}"#,
+            RefreshDestination::Queue => r#"{"talent-review-refresh":{"destination":"queue"}}"#,
+        };
+        (StatusCode::NO_CONTENT, [("HX-Trigger", trigger)]).into_response()
     } else {
         (
             StatusCode::SEE_OTHER,
@@ -530,6 +574,13 @@ fn detail_item(detail: PrivateReviewDetail) -> DetailItem {
     DetailItem {
         item_id: item.item_id,
         source_id: item.source_id,
+        runtime_updated_at: detail
+            .runtime_settings
+            .updated_at
+            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
+        source_updated_at: item
+            .source_updated_at
+            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
         published_record_id: item.published_record_id,
         lock_version: item.lock_version,
         raw_fragment: detail.raw_fragment,
@@ -711,6 +762,16 @@ fn conflict_response(item_id: Uuid) -> Response {
         .into_response()
 }
 
+fn resource_conflict_response(item_id: Uuid, stage: &'static str) -> Response {
+    (
+        StatusCode::CONFLICT,
+        Html(format!(
+            "<p>{stage}使用的设置已被其他审核操作更新。</p><a href=\"/dashboard/moderator/talent/review/{item_id}\">重新加载后继续</a>"
+        )),
+    )
+        .into_response()
+}
+
 fn validation_error(stage: &'static str, next_action: &'static str) -> Response {
     (
         StatusCode::UNPROCESSABLE_ENTITY,
@@ -783,8 +844,8 @@ mod tests {
         db::{
             mock::MockDB,
             talent::{
-                MaskedContact, PublicTalentContact, SaveReviewOutcome, TalentReviewItem,
-                TalentReviewItemSummary, TalentRuntimeSettings, TalentSourceStatus,
+                MaskedContact, PublicTalentContact, ResourceUpdateOutcome, SaveReviewOutcome,
+                TalentReviewItem, TalentReviewItemSummary, TalentRuntimeSettings, TalentSourceStatus,
             },
         },
         handlers::tests::{TestRouterBuilder, sample_auth_user, sample_session_record},
@@ -792,7 +853,10 @@ mod tests {
         talent::{ContactType, ImportItemStatus, RiskLevel, SourceTrust, SourceType, TalentKind},
     };
 
-    use super::{QueueQuery, action_success, queue_filter, queue_item, safe_evidence, safe_risk_text};
+    use super::{
+        QueueQuery, RefreshDestination, action_success, queue_filter, queue_item, safe_evidence,
+        safe_risk_text,
+    };
 
     fn user_session(db: &mut MockDB, moderator: bool) -> (session::Id, Uuid) {
         user_session_times(db, moderator, 1)
@@ -900,6 +964,7 @@ mod tests {
             source_trust_status: SourceTrust::New,
             source_auto_publish_enabled: false,
             source_confirmed_at: None,
+            source_updated_at: Utc::now(),
         }
     }
 
@@ -949,12 +1014,21 @@ mod tests {
     fn htmx_success_is_204_with_trigger_while_complete_request_is_303() {
         let mut htmx = HeaderMap::new();
         htmx.insert("HX-Request", "true".parse().unwrap());
-        let response = action_success(&htmx, "talent-review-saved");
+        let response = action_success(&htmx, RefreshDestination::Detail);
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert_eq!(response.headers()["HX-Trigger"], "talent-review-saved");
+        assert_eq!(
+            response.headers()["HX-Trigger"],
+            r#"{"talent-review-refresh":{"destination":"detail"}}"#
+        );
+        assert!(
+            !response.headers()["HX-Trigger"]
+                .to_str()
+                .unwrap()
+                .contains("fictional_complete_contact")
+        );
         assert!(response.headers().get(LOCATION).is_none());
 
-        let response = action_success(&HeaderMap::new(), "talent-review-saved");
+        let response = action_success(&HeaderMap::new(), RefreshDestination::Queue);
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(response.headers()[LOCATION], "/dashboard/moderator/talent/review");
         assert!(response.headers().get("HX-Trigger").is_none());
@@ -1103,6 +1177,8 @@ mod tests {
             .encrypt_with_version(raw.as_bytes(), &crate::talent::fragment_aad(0), "1")
             .unwrap();
         let mut item = review_item_fixture(item_id);
+        let source_token = Utc.with_ymd_and_hms(2026, 7, 27, 9, 1, 0).unwrap();
+        item.source_updated_at = source_token;
         item.raw_fragment_ciphertext = Some(protected.bytes);
         item.extraction.as_mut().unwrap()["title"] = json!("<img src=x onerror=alert(1)>");
         item.risk_reasons = Some(json!([{
@@ -1116,6 +1192,14 @@ mod tests {
         db.expect_get_talent_review_item()
             .times(1)
             .return_once(move |_| Ok(Some(item)));
+        let runtime_token = Utc.with_ymd_and_hms(2026, 7, 27, 9, 0, 0).unwrap();
+        db.expect_get_talent_runtime_settings().times(1).return_once(move || {
+            Ok(TalentRuntimeSettings {
+                auto_publish_enabled: true,
+                updated_by: None,
+                updated_at: runtime_token,
+            })
+        });
         let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
             .build()
             .await;
@@ -1138,6 +1222,10 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"));
         assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
         assert!(html.contains("&lt;b&gt;unsafe model html&lt;/b&gt;"));
+        assert!(html.contains("name=\"expected_updated_at\""));
+        assert!(html.contains("2026-07-27T09:00:00Z"));
+        assert!(html.contains("2026-07-27T09:01:00Z"));
+        assert!(html.contains("/static/js/dashboard/moderator/talent-review.js"));
         assert!(!html.contains("<script>FICTIONAL_PRIVATE_RAW_26</script>"));
     }
 
@@ -1212,6 +1300,45 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(response.headers()[LOCATION], "/dashboard/moderator/talent/review");
+    }
+
+    #[tokio::test]
+    async fn successful_htmx_save_triggers_detail_reload_for_the_new_version() {
+        let item_id = Uuid::new_v4();
+        let item = review_item_fixture(item_id);
+        let mut db = MockDB::new();
+        let (session_id, _) = user_session(&mut db, true);
+        db.expect_get_talent_review_item()
+            .times(1)
+            .return_once(move |_| Ok(Some(item)));
+        db.expect_save_talent_review()
+            .times(1)
+            .returning(|_| Ok(SaveReviewOutcome::Saved { lock_version: 5 }));
+        let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
+            .build()
+            .await;
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri(format!("/dashboard/moderator/talent/review/{item_id}/save"))
+                    .header(COOKIE, format!("id={session_id}"))
+                    .header("HX-Request", "true")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "lock_version=4&title=Cook&city=Test&district=&roles=Cook&skills=Rust",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response.headers()["HX-Trigger"],
+            r#"{"talent-review-refresh":{"destination":"detail"}}"#
+        );
     }
 
     #[tokio::test]
@@ -1321,6 +1448,8 @@ mod tests {
         let item_id = Uuid::new_v4();
         let record_id = Uuid::new_v4();
         let source_id = Uuid::new_v4();
+        let runtime_token = Utc.with_ymd_and_hms(2026, 7, 27, 9, 0, 0).unwrap();
+        let source_token = Utc.with_ymd_and_hms(2026, 7, 27, 9, 1, 0).unwrap();
         let mut db = MockDB::new();
         let (session_id, user_id) = user_session_times(&mut db, true, 4);
         db.expect_transition_talent_import_item()
@@ -1339,27 +1468,33 @@ mod tests {
             .returning(|_, _, _, _, _| Ok(SaveReviewOutcome::Saved { lock_version: 5 }));
         db.expect_set_talent_auto_publish()
             .times(1)
-            .returning(move |enabled, actor| {
+            .returning(move |enabled, actor, expected| {
                 assert!(!enabled);
                 assert_eq!(actor, user_id);
-                Ok(TalentRuntimeSettings {
+                assert_eq!(expected, runtime_token);
+                Ok(ResourceUpdateOutcome::Updated(TalentRuntimeSettings {
                     auto_publish_enabled: false,
                     updated_by: Some(actor),
                     updated_at: Utc::now(),
-                })
+                }))
             });
         db.expect_set_talent_source_status()
             .times(1)
-            .withf(move |source, trust, actor, enabled| {
-                *source == source_id && *trust == SourceTrust::Watchlist && *actor == user_id && !*enabled
+            .withf(move |source, trust, actor, enabled, expected| {
+                *source == source_id
+                    && *trust == SourceTrust::Watchlist
+                    && *actor == user_id
+                    && !*enabled
+                    && *expected == source_token
             })
-            .returning(move |_, _, actor, _| {
-                Ok(Some(TalentSourceStatus {
+            .returning(move |_, _, actor, _, _| {
+                Ok(ResourceUpdateOutcome::Updated(TalentSourceStatus {
                     source_id,
                     trust_status: SourceTrust::Watchlist,
                     auto_publish_enabled: false,
                     confirmed_by: Some(actor),
                     confirmed_at: Some(Utc::now()),
+                    updated_at: Utc::now(),
                 }))
             });
         let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
@@ -1378,12 +1513,18 @@ mod tests {
             ),
             (
                 "/dashboard/moderator/talent/auto-publish/pause".to_owned(),
-                String::new(),
+                format!(
+                    "expected_updated_at={}&review_item_id={item_id}",
+                    runtime_token.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                ),
                 false,
             ),
             (
                 format!("/dashboard/moderator/talent/sources/{source_id}/status"),
-                "status=watchlist".to_owned(),
+                format!(
+                    "status=watchlist&expected_updated_at={}&review_item_id={item_id}",
+                    source_token.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                ),
                 false,
             ),
         ];
@@ -1404,11 +1545,70 @@ mod tests {
                 .unwrap();
             if htmx {
                 assert_eq!(response.status(), StatusCode::NO_CONTENT);
-                assert!(response.headers().get("HX-Trigger").is_some());
+                assert_eq!(
+                    response.headers()["HX-Trigger"],
+                    r#"{"talent-review-refresh":{"destination":"queue"}}"#
+                );
             } else {
                 assert_eq!(response.status(), StatusCode::SEE_OTHER);
                 assert_eq!(response.headers()[LOCATION], "/dashboard/moderator/talent/review");
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_global_and_source_tokens_return_409_with_safe_detail_reload_guidance() {
+        let item_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let stale_token = Utc.with_ymd_and_hms(2026, 7, 27, 8, 0, 0).unwrap();
+        let mut db = MockDB::new();
+        let (session_id, _) = user_session_times(&mut db, true, 2);
+        db.expect_set_talent_auto_publish()
+            .times(1)
+            .return_once(|_, _, _| Ok(ResourceUpdateOutcome::Conflict));
+        db.expect_set_talent_source_status()
+            .times(1)
+            .return_once(|_, _, _, _, _| Ok(ResourceUpdateOutcome::Conflict));
+        let router = TestRouterBuilder::new(db, MockNotificationsManager::new())
+            .build()
+            .await;
+
+        for (uri, body) in [
+            (
+                "/dashboard/moderator/talent/auto-publish/pause".to_owned(),
+                format!(
+                    "expected_updated_at={}&review_item_id={item_id}",
+                    stale_token.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                ),
+            ),
+            (
+                format!("/dashboard/moderator/talent/sources/{source_id}/status"),
+                format!(
+                    "status=blocked&expected_updated_at={}&review_item_id={item_id}",
+                    stale_token.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+                ),
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri(uri)
+                        .header(COOKIE, format!("id={session_id}"))
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let safe = String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec())
+                .unwrap();
+            assert!(safe.contains(&format!("/dashboard/moderator/talent/review/{item_id}")));
+            assert!(safe.contains("重新加载"));
+            assert!(!safe.contains("fictional_complete_contact"));
         }
     }
 }

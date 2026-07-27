@@ -1,17 +1,16 @@
 -- Updates source trust and records Moderator confirmation for trusted sources.
+drop function if exists set_talent_source_status(uuid, text, uuid, boolean);
+
 create or replace function set_talent_source_status(
     p_source_id uuid,
     p_trust_status text,
     p_actor_user_id uuid,
-    p_auto_publish_enabled boolean
+    p_auto_publish_enabled boolean,
+    p_expected_updated_at timestamptz
 )
-returns table(
-    source_id uuid,
-    trust_status text,
-    auto_publish_enabled boolean,
-    confirmed_by uuid,
-    confirmed_at timestamptz
-) as $$
+returns jsonb as $$
+declare
+    v_status jsonb;
 begin
     if p_trust_status not in ('new', 'trusted', 'watchlist', 'blocked') then
         raise exception 'invalid talent source trust status' using errcode = '22023';
@@ -21,7 +20,6 @@ begin
             using errcode = '22023';
     end if;
 
-    return query
     update talent_sources as updated_source
     set
         trust_status = p_trust_status,
@@ -37,13 +35,25 @@ begin
             when p_trust_status = 'trusted' then current_timestamp
             else confirmed_at
         end,
-        updated_at = current_timestamp
+        updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')
     where updated_source.source_id = p_source_id
-    returning
-        updated_source.source_id,
-        updated_source.trust_status,
-        updated_source.auto_publish_enabled,
-        updated_source.confirmed_by,
-        updated_source.confirmed_at;
+      and updated_source.updated_at = p_expected_updated_at
+    returning jsonb_build_object(
+        'source_id', updated_source.source_id,
+        'trust_status', updated_source.trust_status,
+        'auto_publish_enabled', updated_source.auto_publish_enabled,
+        'confirmed_by', updated_source.confirmed_by,
+        'confirmed_at', updated_source.confirmed_at,
+        'updated_at', updated_source.updated_at
+    )
+    into v_status;
+
+    if found then
+        return jsonb_build_object('outcome', 'updated', 'resource', v_status);
+    end if;
+    if exists (select 1 from talent_sources where source_id = p_source_id) then
+        return jsonb_build_object('outcome', 'conflict');
+    end if;
+    return jsonb_build_object('outcome', 'not_found');
 end;
 $$ language plpgsql;

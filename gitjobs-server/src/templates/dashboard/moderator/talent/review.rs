@@ -60,6 +60,8 @@ pub(crate) struct DetailPage {
 pub(crate) struct DetailItem {
     pub item_id: Uuid,
     pub source_id: Uuid,
+    pub runtime_updated_at: String,
+    pub source_updated_at: String,
     pub published_record_id: Option<Uuid>,
     pub lock_version: u32,
     pub raw_fragment: String,

@@ -1,5 +1,5 @@
 begin;
-select plan(14);
+select plan(16);
 
 \set moderatorId '00000000-0000-0000-0000-000000000701'
 \set sourceId '00000000-0000-0000-0000-000000000711'
@@ -191,12 +191,18 @@ select is(
     withdraw_talent_record(
         :'itemId',
         :'published_record_id',
-        2,
+        1,
         :'moderatorId',
         'withdrawn'
     ),
     2,
-    'repeating a withdrawal with the current version is idempotent'
+    'replaying the original withdrawal version returns the existing outcome'
+);
+
+select is(
+    jsonb_array_length(list_published_talent_records(null, 50)),
+    0,
+    'replaying the original withdrawal keeps the record out of public results'
 );
 
 select is(
@@ -213,6 +219,12 @@ select is(
     ),
     1::bigint,
     'repeating a withdrawal does not create another audit event'
+);
+
+select is(
+    (select withdrawn_count from talent_sources where source_id = :'sourceId'),
+    1,
+    'replaying a withdrawal does not increment the source counter again'
 );
 
 select * from finish();

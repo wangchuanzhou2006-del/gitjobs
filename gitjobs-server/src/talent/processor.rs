@@ -447,6 +447,7 @@ mod tests {
             source_trust_status: source_trust,
             source_auto_publish_enabled: true,
             source_confirmed_at: Some(Utc::now()),
+            source_updated_at: Utc::now(),
         }
     }
 

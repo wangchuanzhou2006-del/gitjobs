@@ -294,6 +294,7 @@ pub(crate) struct TalentReviewItem {
     pub source_trust_status: SourceTrust,
     pub source_auto_publish_enabled: bool,
     pub source_confirmed_at: Option<DateTime<Utc>>,
+    pub source_updated_at: DateTime<Utc>,
 }
 
 impl fmt::Debug for TalentReviewItem {
@@ -840,6 +841,15 @@ pub(crate) struct TalentSourceStatus {
     pub auto_publish_enabled: bool,
     pub confirmed_by: Option<Uuid>,
     pub confirmed_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", content = "resource", rename_all = "snake_case")]
+pub(crate) enum ResourceUpdateOutcome<T> {
+    Updated(T),
+    Conflict,
+    NotFound,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1008,6 +1018,7 @@ struct TalentReviewItemWire {
     source_trust_status: SourceTrust,
     source_auto_publish_enabled: bool,
     source_confirmed_at: Option<DateTime<Utc>>,
+    source_updated_at: DateTime<Utc>,
 }
 
 impl TalentReviewItemWire {
@@ -1049,6 +1060,7 @@ impl TalentReviewItemWire {
             source_trust_status: self.source_trust_status,
             source_auto_publish_enabled: self.source_auto_publish_enabled,
             source_confirmed_at: self.source_confirmed_at,
+            source_updated_at: self.source_updated_at,
         })
     }
 }
@@ -1160,14 +1172,16 @@ pub(crate) trait DBTalent {
         &self,
         enabled: bool,
         actor_user_id: Uuid,
-    ) -> Result<TalentRuntimeSettings>;
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<ResourceUpdateOutcome<TalentRuntimeSettings>>;
     async fn set_talent_source_status(
         &self,
         source_id: Uuid,
         trust_status: SourceTrust,
         actor_user_id: Uuid,
         auto_publish_enabled: bool,
-    ) -> Result<Option<TalentSourceStatus>>;
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<ResourceUpdateOutcome<TalentSourceStatus>>;
     async fn cleanup_talent_raw_data(&self, now: DateTime<Utc>) -> Result<TalentCleanupOutcome>;
 }
 
@@ -1511,13 +1525,14 @@ impl DBTalent for PgDB {
         &self,
         enabled: bool,
         actor_user_id: Uuid,
-    ) -> Result<TalentRuntimeSettings> {
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<ResourceUpdateOutcome<TalentRuntimeSettings>> {
         trace!("db: set talent auto-publish");
         let db = self.pool.get().await?;
         let row = db
             .query_one(
-                "select set_talent_auto_publish($1::boolean, $2::uuid)::text;",
-                &[&enabled, &actor_user_id],
+                "select set_talent_auto_publish($1::boolean, $2::uuid, $3::timestamptz)::text;",
+                &[&enabled, &actor_user_id, &expected_updated_at],
             )
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
@@ -1530,29 +1545,27 @@ impl DBTalent for PgDB {
         trust_status: SourceTrust,
         actor_user_id: Uuid,
         auto_publish_enabled: bool,
-    ) -> Result<Option<TalentSourceStatus>> {
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<ResourceUpdateOutcome<TalentSourceStatus>> {
         trace!("db: set talent source status");
         let db = self.pool.get().await?;
         let row = db
-            .query_opt(
+            .query_one(
                 "
-                select row_to_json(status)::text
-                from set_talent_source_status(
-                    $1::uuid, $2::text, $3::uuid, $4::boolean
-                ) status;
+                select set_talent_source_status(
+                    $1::uuid, $2::text, $3::uuid, $4::boolean, $5::timestamptz
+                )::text;
                 ",
                 &[
                     &source_id,
                     &source_trust_name(trust_status),
                     &actor_user_id,
                     &auto_publish_enabled,
+                    &expected_updated_at,
                 ],
             )
             .await?;
-        let status = row
-            .map(|row| serde_json::from_str(&row.get::<_, String>(0)))
-            .transpose()?;
-        Ok(status)
+        Ok(serde_json::from_str(&row.get::<_, String>(0))?)
     }
 
     #[instrument(skip(self), err)]

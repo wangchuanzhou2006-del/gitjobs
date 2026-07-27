@@ -35,7 +35,8 @@ returns jsonb as $$
             s.name as source_name,
             s.trust_status as source_trust_status,
             s.auto_publish_enabled as source_auto_publish_enabled,
-            s.confirmed_at as source_confirmed_at
+            s.confirmed_at as source_confirmed_at,
+            s.updated_at as source_updated_at
         from talent_import_items i
         join talent_import_batches b using (batch_id)
         join talent_sources s using (source_id)
