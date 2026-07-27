@@ -87,7 +87,8 @@ fn public_record(record: PublicTalentRecord, mode: TalentMode) -> TalentRecord {
         .map(String::as_str)
         .collect::<Vec<_>>()
         .join(" ");
-    let mut skills = record.roles;
+    let roles = record.roles;
+    let mut skills = roles.clone();
     for skill in record.skills {
         if !skills.contains(&skill) {
             skills.push(skill);
@@ -121,6 +122,7 @@ fn public_record(record: PublicTalentRecord, mode: TalentMode) -> TalentRecord {
         location_terms,
         salary_min: record.salary_min,
         salary_max: record.salary_max,
+        roles,
         skills,
         experience_years: record.experience_years,
         hours_per_day: record.hours_per_day,
@@ -211,6 +213,7 @@ mod tests {
         let html =
             String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(!html.contains("界面原型数据，不代表真实招聘或求职信息"));
+        assert!(html.contains("经过确认后发布"));
         assert!(html.contains("测试厨师岗位"));
         assert!(html.contains("河北"));
         assert!(html.contains("石家庄"));
@@ -230,6 +233,7 @@ mod tests {
         assert!(html.contains(r#""lodging":null"#));
         assert!(html.contains(r#""housingAllowance":true"#));
         assert!(html.contains(r#""credibility":null"#));
+        assert!(html.contains(r#""roles":["厨师","炒锅"]"#));
         assert!(html.contains("薪资范围待确认"));
         assert!(!html.contains("0–0 元/月"));
         assert!(!html.contains("0 年"));
@@ -301,6 +305,8 @@ mod tests {
         let html =
             String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(html.contains("界面原型数据，不代表真实招聘或求职信息"));
+        assert!(html.contains("虚构演示数据"));
+        assert!(!html.contains("经过确认后发布"));
         assert_eq!(html.matches("<article class=\"talent-card\"").count(), 16);
     }
 }

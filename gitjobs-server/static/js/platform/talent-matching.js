@@ -1,6 +1,3 @@
-const REGION_PATTERN = /(北京|天津|河北|广东|江苏|浙江|四川|安徽)/;
-const ROLE_PATTERN = /(炒锅|切配|打荷|洗碗|面点|烧烤|服务员|店长)/;
-const SKILL_PATTERN = /(川湘菜|家常菜|清真|火锅|早餐|面食|刀工)/g;
 export const TALENT_DIMENSION_WEIGHTS = Object.freeze({
   role: 20,
   region: 20,
@@ -24,10 +21,50 @@ const CONDITION_DIMENSIONS = {
 };
 
 const locationTerms = (record) => {
-  const terms = Array.isArray(record.locationTerms)
-    ? record.locationTerms
-    : [record.region, record.district];
-  return terms.filter((term) => typeof term === "string" && term.trim());
+  const terms = [
+    ...(Array.isArray(record.locationTerms) ? record.locationTerms : []),
+    record.region,
+    record.district,
+  ];
+  return [...new Set(terms.filter((term) => typeof term === "string" && term.trim()))];
+};
+
+const literalTerms = (values) =>
+  [...new Set(values.filter((value) => typeof value === "string" && value.trim()))].sort(
+    (left, right) => right.length - left.length || (left < right ? -1 : left > right ? 1 : 0),
+  );
+
+const longestLiteralMatches = (input, values) => {
+  const matches = [];
+  for (const value of literalTerms(values)) {
+    if (!input.includes(value)) continue;
+    if (matches.some((longer) => longer.includes(value))) continue;
+    matches.push(value);
+  }
+  return matches;
+};
+
+const searchableVocabulary = (records) => {
+  const locations = [];
+  const roles = [];
+  const skills = [];
+  for (const record of records) {
+    locations.push(...locationTerms(record));
+    if (typeof record.title === "string" && record.title.trim()) roles.push(record.title);
+    if (Array.isArray(record.roles)) roles.push(...record.roles);
+    if (Array.isArray(record.skills)) {
+      skills.push(...record.skills);
+      if (typeof record.title === "string")
+        roles.push(...record.skills.filter((skill) => record.title.includes(skill)));
+    }
+  }
+  const roleTerms = literalTerms(roles);
+  const roleSet = new Set(roleTerms);
+  return {
+    locations: literalTerms(locations),
+    roles: roleTerms,
+    skills: literalTerms(skills.filter((skill) => !roleSet.has(skill))),
+  };
 };
 
 const matchesLocation = (record, value) =>
@@ -108,12 +145,13 @@ const evaluate = (record, condition) => {
   return null;
 };
 
-export const parseTalentCommand = (input, mode) => {
+export const parseTalentCommand = (input, mode, records = []) => {
   if (!["hiring", "seeking"].includes(mode)) return [];
   const conditions = [];
-  const region = input.match(REGION_PATTERN)?.[1];
-  const role = input.match(ROLE_PATTERN)?.[1];
-  const skills = [...new Set(input.match(SKILL_PATTERN) || [])];
+  const vocabulary = searchableVocabulary(records);
+  const region = longestLiteralMatches(input, vocabulary.locations)[0];
+  const role = longestLiteralMatches(input, vocabulary.roles)[0];
+  const skills = longestLiteralMatches(input, vocabulary.skills);
   const salary = input.match(/(?:工资|薪资)?\s*(\d{4,5})\s*(?:元|以上|起)?/);
   const experience = input.match(/(\d+)\s*年(?:经验|从业)?/);
   const restDays = input.match(/月休\s*(\d+)\s*天/);

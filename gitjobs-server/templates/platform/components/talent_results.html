@@ -1,6 +1,10 @@
 <section class="talent-results" aria-labelledby="talent-results-title">
   <header>
-    <p>经过确认后发布</p>
+    {% if prototype_mode %}
+      <p>虚构演示数据</p>
+    {% else %}
+      <p>经过确认后发布</p>
+    {% endif %}
     <h2 id="talent-results-title">人才与岗位</h2>
     <p id="talent-status" aria-live="polite">当前展示 {{ hiring_records.len() }} 条招聘机会</p>
   </header>

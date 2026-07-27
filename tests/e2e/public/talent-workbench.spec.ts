@@ -15,6 +15,7 @@ type TalentRecord = {
   locationTerms: string[];
   salaryMin: number | null;
   salaryMax: number | null;
+  roles: string[];
   skills: string[];
   experienceYears: number | null;
   hoursPerDay: number | null;
@@ -42,6 +43,8 @@ const expectExplicitFixtureDataset = async (page: Page): Promise<TalentDataset> 
   expect(records.length).toBeGreaterThan(0);
   expect(records.every((record) => record.prototype)).toBe(true);
   await expect(page.getByRole("note")).toContainText("界面原型数据");
+  await expect(page.locator(".talent-results > header")).toContainText("虚构演示数据");
+  await expect(page.locator(".talent-results > header")).not.toContainText("经过确认后发布");
   return dataset;
 };
 
@@ -208,6 +211,42 @@ test.describe("餐饮人才工作台", () => {
     await expect(page.locator("#talent-status")).toContainText(/匹配结果|没有匹配结果/);
   });
 
+  test("数据集提供扩展地区或岗位时可直接生成匹配", async ({ page }) => {
+    const dataset = await readTalentDataset(page);
+    const oldLocations = new Set(["北京", "天津", "河北", "广东", "江苏", "浙江", "四川", "安徽"]);
+    const oldRoles = new Set(["炒锅", "切配", "打荷", "洗碗", "面点", "烧烤", "服务员", "店长"]);
+    const candidates = [...dataset.hiring, ...dataset.seeking].map((record) => ({
+      record,
+      location: record.locationTerms
+        .filter((term) => !oldLocations.has(term))
+        .sort((left, right) => right.length - left.length)[0],
+      role: [...record.roles, record.title]
+        .filter((term) => !oldRoles.has(term))
+        .sort((left, right) => right.length - left.length)[0],
+    }));
+    const candidate = candidates.find(({ location, role }) => location || role);
+    if (!candidate) {
+      test.skip(true, "当前数据集没有旧默认词表之外的地区或岗位");
+      return;
+    }
+
+    if (candidate.record.mode === "seeking")
+      await page.getByRole("button", { name: "求职人才" }).click();
+    const terms = [candidate.location, candidate.role].filter(
+      (term): term is string => Boolean(term),
+    );
+    await page.getByLabel("描述招聘或求职需求").fill(terms.join("找"));
+    await page.getByRole("button", { name: "生成匹配" }).click();
+
+    for (const term of terms) await expect(page.locator("#talent-condition-chips")).toContainText(term);
+    expect(
+      await page.locator("[data-talent-card]:visible").evaluateAll(
+        (cards, id) => cards.some((card) => card.getAttribute("data-talent-id") === id),
+        candidate.record.id,
+      ),
+    ).toBe(true);
+  });
+
   test("支持移除条件、撤销和 Enter 提交", async ({ page }) => {
     const input = page.getByLabel("描述招聘或求职需求");
     await input.fill("天津找切配，工资5000以上");
@@ -301,10 +340,6 @@ test.describe("餐饮人才工作台", () => {
       const matchingUrl = workbenchSource.match(/from "([^"]*talent-matching[^"]*)"/)?.[1];
       if (!matchingUrl) throw new Error("talent matching asset URL missing");
       const matching = await import(matchingUrl);
-      const conditions = matching.parseTalentCommand(
-        "北京找切配，工资7000以上，川湘菜，3年经验，包吃住，月休4天，随时上岗，急招",
-        "hiring",
-      );
       const base = {
         mode: "hiring",
         title: "切配岗位（原型）",
@@ -314,6 +349,7 @@ test.describe("餐饮人才工作台", () => {
         locationTerms: ["北京", "朝阳区"],
         salaryMin: 7000,
         salaryMax: 9000,
+        roles: ["切配"],
         skills: ["切配", "川湘菜"],
         experienceYears: 4,
         hoursPerDay: 8,
@@ -327,6 +363,11 @@ test.describe("餐饮人才工作台", () => {
         riskFlags: ["岗位细节待确认（原型）"],
         prototype: true,
       };
+      const conditions = matching.parseTalentCommand(
+        "北京找切配，工资7000以上，川湘菜，3年经验，包吃住，月休4天，随时上岗，急招",
+        "hiring",
+        [base],
+      );
       const exact = { ...base, id: "exact", credibility: 80 };
       const sameScoreHighA = { ...base, id: "same-score-high-a", credibility: 95 };
       const sameScoreHighB = { ...base, id: "same-score-high-b", credibility: 95 };

@@ -39,6 +39,7 @@ pub(crate) struct TalentRecord {
     pub location_terms: Vec<String>,
     pub salary_min: Option<u32>,
     pub salary_max: Option<u32>,
+    pub roles: Vec<String>,
     pub skills: Vec<String>,
     pub experience_years: Option<u8>,
     pub hours_per_day: Option<u8>,
@@ -123,6 +124,16 @@ impl TalentRecord {
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
+    let extra_skills = [
+        "川湘菜",
+        "家常菜",
+        "清真",
+        "火锅",
+        "早餐",
+        "面食",
+        "刀工",
+        "川湘菜",
+    ];
     let fixtures = [
         (
             "proto-hire-01",
@@ -204,7 +215,12 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
                 location_terms: vec![region.to_owned(), district.to_owned()],
                 salary_min: Some(4_800 + index as u32 * 400),
                 salary_max: Some(7_000 + index as u32 * 500),
-                skills: vec![skill.to_owned(), "餐饮门店协作（原型）".to_owned()],
+                roles: vec![skill.to_owned()],
+                skills: vec![
+                    skill.to_owned(),
+                    extra_skills[index].to_owned(),
+                    "餐饮门店协作（原型）".to_owned(),
+                ],
                 experience_years: Some((index % 5 + 1) as u8),
                 hours_per_day: Some(8),
                 rest_days: Some(4),
@@ -246,6 +262,16 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
 pub(crate) fn prototype_seeking_records() -> Vec<TalentRecord> {
+    let extra_skills = [
+        "家常菜",
+        "川湘菜",
+        "清真",
+        "火锅",
+        "早餐",
+        "面食",
+        "刀工",
+        "川湘菜",
+    ];
     let fixtures = [
         (
             "proto-seek-01",
@@ -327,7 +353,12 @@ pub(crate) fn prototype_seeking_records() -> Vec<TalentRecord> {
                 location_terms: vec![region.to_owned(), district.to_owned()],
                 salary_min: Some(4_500 + index as u32 * 450),
                 salary_max: Some(6_500 + index as u32 * 550),
-                skills: vec![skill.to_owned(), "餐饮门店协作（原型）".to_owned()],
+                roles: vec![skill.to_owned()],
+                skills: vec![
+                    skill.to_owned(),
+                    extra_skills[index].to_owned(),
+                    "餐饮门店协作（原型）".to_owned(),
+                ],
                 experience_years: Some((index % 6 + 1) as u8),
                 hours_per_day: Some(8),
                 rest_days: Some(4),
@@ -421,6 +452,23 @@ mod tests {
         });
 
         assert!(record.is_some(), "北京切配示例指令应至少有一条硬条件匹配记录");
+    }
+
+    #[test]
+    fn prototype_fixtures_expose_the_previous_searchable_skill_commands() {
+        let records = prototype_hiring_records()
+            .into_iter()
+            .chain(prototype_seeking_records())
+            .collect::<Vec<_>>();
+
+        for skill in ["川湘菜", "家常菜", "清真", "火锅", "早餐", "面食", "刀工"] {
+            assert!(
+                records
+                    .iter()
+                    .any(|record| record.skills.iter().any(|value| value == skill)),
+                "prototype dataset should deliver the previous searchable skill: {skill}"
+            );
+        }
     }
 
     #[derive(Serialize)]

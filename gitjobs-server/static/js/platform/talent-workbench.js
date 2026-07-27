@@ -78,7 +78,7 @@ export const initializeTalentWorkbench = (data) => {
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const next = parseTalentCommand(input.value, state.mode);
+    const next = parseTalentCommand(input.value, state.mode, data[state.mode]);
     if (!next.length) {
       status.textContent = "未识别新条件，可尝试“北京找切配，工资7000以上”";
       return;
