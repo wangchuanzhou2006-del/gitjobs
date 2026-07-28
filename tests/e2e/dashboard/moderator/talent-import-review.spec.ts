@@ -7,6 +7,7 @@ import { loginWithCredentials } from "../../shared/utils";
 const TRUSTED_SOURCE = "E2E Trusted Talent Source";
 const NEW_SOURCE = "E2E New Talent Source";
 const MERGE_TARGET_ID = "00000000-0000-4000-8000-000000001211";
+const SEEDED_REVIEW_ONLY_TITLES = ["E2E 种子费用待核招聘", "E2E 种子高相似招聘"];
 const browserDiagnostics = new WeakMap<Page, BrowserDiagnostics>();
 const PROTECTED_FIELD_NAMES = [
   "raw_text_ciphertext",
@@ -27,6 +28,11 @@ const E2E_SECRET_VALUES = [
 type BrowserDiagnostics = {
   allMessages: string[];
   errors: string[];
+};
+
+type PublicProjection = {
+  html: string;
+  json: string;
 };
 
 type WorkflowState = {
@@ -121,6 +127,25 @@ const waitForBatchTitles = async (page: Page, batchId: string, titles: string[])
     "completed talent batch",
   );
   for (const title of titles) await expect(page.getByRole("heading", { name: title })).toBeVisible();
+};
+
+const readPublicProjection = async (page: Page): Promise<PublicProjection> => {
+  const response = await page.request.get("/talent");
+  expect(response.status()).toBe(200);
+  const html = await response.text();
+  await navigateWithRetries(page, "/talent", "public talent projection");
+  const dataset = await page.locator("#talent-data").evaluate((node) => {
+    return JSON.parse(node.textContent || "");
+  });
+  return { html, json: JSON.stringify(dataset) };
+};
+
+const expectTitlesAbsentFromPublicProjection = (
+  projection: PublicProjection,
+  titles: string[],
+) => {
+  for (const body of [projection.html, projection.json])
+    for (const title of titles) expect(body).not.toContain(title);
 };
 
 const rowFor = (page: Page, title: string) =>
@@ -232,6 +257,11 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
       })
       .toBeGreaterThan(before);
     await expect(page.getByText("待查看", { exact: true })).toBeVisible();
+    const publicProjection = await readPublicProjection(page);
+    expectTitlesAbsentFromPublicProjection(publicProjection, [
+      ...SEEDED_REVIEW_ONLY_TITLES,
+      fixture.titles.newSource,
+    ]);
   });
 
   test("Moderator can edit/publish, reject, merge, and withdraw with one click", async ({
@@ -279,12 +309,18 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await expect(rowFor(page, fixture.titles.highRisk)).toContainText("已驳回");
     await expect(rowFor(page, fixture.titles.duplicate)).toContainText("已合并");
 
-    const publicBody = await (await page.request.get("/talent")).text();
-    expect(publicBody).toContain(editedTitle);
-    expect(publicBody).toContain(fixture.titles.safeSeeking);
-    expect(publicBody).not.toContain(fixture.titles.safeHiring);
-    expect(publicBody).not.toContain(fixture.titles.highRisk);
-    expect(publicBody).not.toContain(fixture.titles.duplicate);
+    const publicProjection = await readPublicProjection(page);
+    for (const body of [publicProjection.html, publicProjection.json]) {
+      expect(body).toContain(editedTitle);
+      expect(body).toContain(fixture.titles.safeSeeking);
+    }
+    expectTitlesAbsentFromPublicProjection(publicProjection, [
+      ...SEEDED_REVIEW_ONLY_TITLES,
+      fixture.titles.newSource,
+      fixture.titles.safeHiring,
+      fixture.titles.highRisk,
+      fixture.titles.duplicate,
+    ]);
   });
 
   test("global pause prevents a later trusted low-risk item from auto-publishing", async ({
@@ -301,8 +337,12 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     const batchId = await submitImport(page, TRUSTED_SOURCE, raw);
     await waitForBatchTitles(page, batchId, [fixture.titles.pausedSafe]);
     await expect(rowFor(page, fixture.titles.pausedSafe)).toContainText("待查看");
-    const publicBody = await (await page.request.get("/talent")).text();
-    expect(publicBody).not.toContain(fixture.titles.pausedSafe);
+    const publicProjection = await readPublicProjection(page);
+    expectTitlesAbsentFromPublicProjection(publicProjection, [
+      ...SEEDED_REVIEW_ONLY_TITLES,
+      fixture.titles.newSource,
+      fixture.titles.pausedSafe,
+    ]);
     workflow.sensitiveValues.push(
       syntheticPhone(fixture.phoneBase + 6),
       `E2E_PAUSED_SAFE_${fixture.token}`,
@@ -313,11 +353,12 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     page,
   }, testInfo) => {
     const fixture = projectFixture(testInfo);
-    const publicResponse = await page.request.get("/talent");
-    expect(publicResponse.status()).toBe(200);
-    const publicHtml = await publicResponse.text();
-    await navigateWithRetries(page, "/talent", "public talent privacy boundary");
-    const browserJson = await page.locator("#talent-data").textContent();
+    const publicProjection = await readPublicProjection(page);
+    expectTitlesAbsentFromPublicProjection(publicProjection, [
+      ...SEEDED_REVIEW_ONLY_TITLES,
+      fixture.titles.newSource,
+      fixture.titles.pausedSafe,
+    ]);
 
     await openItem(page, workflow.newItemId);
     const lockVersion = await page.locator('input[name="lock_version"]').first().inputValue();
@@ -334,7 +375,7 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
       privateErrorValue,
       ...E2E_SECRET_VALUES,
     ];
-    for (const body of [publicHtml, browserJson ?? "", errorBody]) {
+    for (const body of [publicProjection.html, publicProjection.json, errorBody]) {
       for (const name of PROTECTED_FIELD_NAMES) expect(body).not.toContain(name);
       for (const secret of forbiddenSecrets) expect(body).not.toContain(secret);
     }
