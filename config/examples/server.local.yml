@@ -26,8 +26,14 @@ server:
   talent:
     enabled: false
     prototype_data: true
-    # Disabled AI needs no key. Before setting enabled: true, provide
-    # GITJOBS_SERVER__TALENT__AI__API_KEY in the environment; never put a key here.
+    # TASK 12 EXAMPLE ONLY: every placeholder below is deliberately invalid and
+    # nonworking. Production must set prototype_data=false and inject independently
+    # generated values through the environment or a secret manager:
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__ACTIVE_VERSION=<positive-integer>
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__KEYS__1=<INVALID-64-LOWERCASE-HEX-PLACEHOLDER>
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__CONTACT_PEPPER=<INVALID-INDEPENDENT-SECRET>
+    # GITJOBS_SERVER__TALENT__AI__API_KEY=<INVALID-PROVIDER-CREDENTIAL>
+    # Disabled AI needs no key. Never put a working credential in this file.
     ai:
       base_url: https://api.example.invalid/v1
-      model: replace-with-compatible-model
+      model: invalid-model-name

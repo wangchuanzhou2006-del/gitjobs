@@ -15,6 +15,12 @@ jobs:
       PGUSER: gitjobs
       PGPASSWORD: password
       PGDATABASE: gitjobs
+      # Deterministic E2E-only cryptography. These well-known synthetic values
+      # must never be reused outside this disposable test database.
+      GITJOBS_SERVER__TALENT__ENCRYPTION__ACTIVE_VERSION: "1"
+      GITJOBS_SERVER__TALENT__ENCRYPTION__KEYS__1: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      GITJOBS_SERVER__TALENT__ENCRYPTION__CONTACT_PEPPER: "e2e-only-nonproduction-contact-pepper"
+      GITJOBS_SERVER__TALENT__AI__API_KEY: "deliberately-invalid-outside-local-e2e"
 
     services:
       postgres:
@@ -113,6 +119,12 @@ jobs:
               linuxfoundation: false
             oauth2: {}
             oidc: {}
+            talent:
+              enabled: true
+              prototype_data: false
+              ai:
+                base_url: "http://127.0.0.1:18081/v1"
+                model: "e2e-deterministic-v1"
           EOF
 
       - name: Start server and wait for it to be ready
@@ -128,3 +140,5 @@ jobs:
         run: npx playwright test --config tests/e2e/playwright.config.ts
         env:
           BASE_URL: http://127.0.0.1:8080
+          GITJOBS_E2E_TALENT_ACCEPTANCE: "1"
+          GITJOBS_E2E_TALENT_AI_PORT: "18081"

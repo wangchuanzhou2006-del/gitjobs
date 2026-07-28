@@ -37,14 +37,15 @@ type TalentDataset = { hiring: TalentRecord[]; seeking: TalentRecord[] };
 const readTalentDataset = async (page: Page): Promise<TalentDataset> =>
   page.locator("#talent-data").evaluate((node) => JSON.parse(node.textContent || ""));
 
-const expectExplicitFixtureDataset = async (page: Page): Promise<TalentDataset> => {
+const expectFormalSeedDataset = async (page: Page): Promise<TalentDataset> => {
   const dataset = await readTalentDataset(page);
   const records = [...dataset.hiring, ...dataset.seeking];
-  expect(records.length).toBeGreaterThan(0);
-  expect(records.every((record) => record.prototype)).toBe(true);
-  await expect(page.getByRole("note")).toContainText("界面原型数据");
-  await expect(page.locator(".talent-results > header")).toContainText("虚构演示数据");
-  await expect(page.locator(".talent-results > header")).not.toContainText("经过确认后发布");
+  expect(dataset.hiring.length).toBeGreaterThan(0);
+  expect(dataset.seeking.length).toBeGreaterThan(0);
+  expect(records.every((record) => record.prototype === false)).toBe(true);
+  await expect(page.getByRole("note")).toHaveCount(0);
+  await expect(page.locator(".talent-results > header")).toContainText("经过确认后发布");
+  await expect(page.locator(".talent-results > header")).not.toContainText("虚构演示数据");
   return dataset;
 };
 
@@ -72,14 +73,14 @@ test.describe("餐饮人才工作台", () => {
   test.beforeEach(async ({ page }) => {
     captureBrowserErrors(page);
     await navigateWithRetries(page, "/talent", "talent workbench");
-    await expectExplicitFixtureDataset(page);
+    await expectFormalSeedDataset(page);
   });
 
   test.afterEach(async ({ page }) => {
     expect(browserErrors.get(page) ?? []).toEqual([]);
   });
 
-  test("禁用 JavaScript 时显式原型数据仍由服务端完整呈现", async ({ browser }) => {
+  test("禁用 JavaScript 时正式发布数据仍由服务端完整呈现", async ({ browser }) => {
     const context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
     const errors = captureBrowserErrors(page);
@@ -87,7 +88,8 @@ test.describe("餐饮人才工作台", () => {
 
     expect(await page.locator('[data-talent-card][data-talent-mode="hiring"]:visible').count()).toBeGreaterThan(0);
     expect(await page.locator('[data-talent-card][data-talent-mode="seeking"]:visible').count()).toBeGreaterThan(0);
-    await expect(page.getByRole("note")).toContainText("界面原型数据");
+    await expect(page.getByRole("note")).toHaveCount(0);
+    await expect(page.locator(".talent-results > header")).toContainText("经过确认后发布");
     await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
     expect(errors).toEqual([]);
     await context.close();
@@ -173,7 +175,7 @@ test.describe("餐饮人才工作台", () => {
     await navigateWithRetries(page, "/talent", "talent workbench without Storage");
 
     await expect(page.locator("#talent-app")).toHaveAttribute("data-theme", "dark");
-    const dataset = await expectExplicitFixtureDataset(page);
+    const dataset = await expectFormalSeedDataset(page);
     await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]:visible')).toHaveCount(
       dataset.hiring.length,
     );
