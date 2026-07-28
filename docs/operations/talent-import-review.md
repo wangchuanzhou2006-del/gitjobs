@@ -166,7 +166,7 @@ well-known disposable E2E cryptographic values from the CI workflow. Those
 test-only values and the local HTTP mock are forbidden in any formal
 deployment.
 
-The Playwright command must pass in Chromium, Firefox, and WebKit with zero `console.error` and zero `pageerror` events.
+The Playwright command must pass in Chromium, Firefox, and WebKit with zero `console.error` and zero `pageerror` events. Run each browser project against its own freshly migrated and seeded formal test database/server because the emergency-pause acceptance case intentionally leaves global auto-publication paused. CI provides this isolation with one disposable job per browser; local runs must recreate, reseed, and restart the test database/server before moving to the next project. Every captured console level (`error`, `warning`, `info`, `log`, and `debug` when emitted) is scanned for protected field names, synthetic full contacts/raw markers, and disposable provider/cryptographic values.
 
 | # | Acceptance criterion | Passing evidence |
 | --- | --- | --- |
@@ -177,11 +177,11 @@ The Playwright command must pass in Chromium, Firefox, and WebKit with zero `con
 | 5 | Only complete, trusted, low-risk items auto-publish | Moderator Playwright requires the two safe trusted rows to publish through the worker pipeline. |
 | 6 | New, medium/high risk, and duplicates require review | Moderator Playwright checks each gate and the seeded high-similarity record. |
 | 7 | Edit, publish, reject, merge, reprocess, withdraw | Moderator Playwright exercises every action through existing forms/routes. |
-| 8 | `/talent` contains reviewed formal data only | Formal seed plus both public functional/visual specs require `prototype=false`. |
-| 9 | Public output protects contacts and raw text | Moderator privacy test inspects HTML, browser JSON, safe error bodies, console, and page errors. |
+| 8 | `/talent` contains reviewed formal data only | Both public functional/visual specs require `prototype=false` and explicitly prove the seeded `needs_review` fee/high-similarity titles are absent from parsed `#talent-data` JSON and rendered body text. |
+| 9 | Public output protects contacts and raw text | Moderator privacy test inspects HTML, browser JSON, safe error bodies, page errors, and every captured console level for protected field names, full synthetic contacts/raw markers, and disposable secrets. |
 | 10 | Automatic and manual decisions are audited | pgTAP review/publication tests verify review events; workflow actions exercise their database paths. |
 | 11 | AI unavailable still enters review | Processor retry/unavailable Rust tests verify safe review persistence after the second timeout/failure. |
-| 12 | One-click global pause | WebKit performs the irreversible pause last and proves a later trusted low-risk item stays private. |
+| 12 | One-click global pause | Chromium, Firefox, and WebKit each perform the irreversible pause in an isolated job/database and prove a later trusted low-risk item stays private. |
 | 13 | Protected source data is removed after 90 days | Cleanup pgTAP tests plus the due-row operator query above. |
 | 14 | Duplicate clicks/concurrency do not create duplicate records | Publication pgTAP idempotency/concurrency tests plus the single-request withdrawal assertion. |
 

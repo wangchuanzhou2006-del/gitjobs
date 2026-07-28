@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { navigateWithRetries } from "../shared/helpers";
 
 const browserErrors = new WeakMap<Page, string[]>();
+const SEEDED_PENDING_TITLES = ["E2E 种子费用待核招聘", "E2E 种子高相似招聘"];
 
 type TalentRecord = {
   id: string;
@@ -43,6 +44,10 @@ const expectFormalSeedDataset = async (page: Page): Promise<TalentDataset> => {
   expect(dataset.hiring.length).toBeGreaterThan(0);
   expect(dataset.seeking.length).toBeGreaterThan(0);
   expect(records.every((record) => record.prototype === false)).toBe(true);
+  for (const title of SEEDED_PENDING_TITLES) {
+    expect(records.map((record) => record.title)).not.toContain(title);
+    await expect(page.locator("body")).not.toContainText(title);
+  }
   await expect(page.getByRole("note")).toHaveCount(0);
   await expect(page.locator(".talent-results > header")).toContainText("经过确认后发布");
   await expect(page.locator(".talent-results > header")).not.toContainText("虚构演示数据");

@@ -7,7 +7,27 @@ import { loginWithCredentials } from "../../shared/utils";
 const TRUSTED_SOURCE = "E2E Trusted Talent Source";
 const NEW_SOURCE = "E2E New Talent Source";
 const MERGE_TARGET_ID = "00000000-0000-4000-8000-000000001211";
-const browserErrors = new WeakMap<Page, string[]>();
+const browserDiagnostics = new WeakMap<Page, BrowserDiagnostics>();
+const PROTECTED_FIELD_NAMES = [
+  "raw_text_ciphertext",
+  "raw_fragment_ciphertext",
+  "contact_candidates_ciphertext",
+  "contact_hashes",
+  "encryption_key_version",
+  "normalized_fingerprint",
+];
+const E2E_SECRET_VALUES = [
+  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "e2e-only-nonproduction-contact-pepper",
+  "deliberately-invalid-outside-local-e2e",
+  "e2e-deterministic-v1",
+  "openai-compatible",
+];
+
+type BrowserDiagnostics = {
+  allMessages: string[];
+  errors: string[];
+};
 
 type WorkflowState = {
   batchId: string;
@@ -37,13 +57,35 @@ const projectFixture = (testInfo: TestInfo) => {
   return { project, token, phoneBase, titles: titlesFor(project) };
 };
 
+const projectProtectedValues = (project: string, token: string, phoneBase: number) => [
+  ...[0, 2, 3, 4, 5, 6].map((offset) => syntheticPhone(phoneBase + offset)),
+  `test_candidate_${project}_02`,
+  ...[
+    "SAFE_HIRING",
+    "SAFE_SEEKING",
+    "MEDIUM_FEE",
+    "HIGH_RISK",
+    "DUPLICATE",
+    "NEW_SOURCE",
+    "PAUSED_SAFE",
+  ].map((marker) => `E2E_${marker}_${token}`),
+  `E2E_PRIVATE_ERROR_${token}_13800009999`,
+  ...E2E_SECRET_VALUES,
+];
+
 const attachBrowserErrorCapture = (page: Page) => {
-  const errors: string[] = [];
-  browserErrors.set(page, errors);
+  const diagnostics: BrowserDiagnostics = { allMessages: [], errors: [] };
+  browserDiagnostics.set(page, diagnostics);
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console.error: ${message.text()}`);
+    const entry = `console.${message.type()}: ${message.text()}`;
+    diagnostics.allMessages.push(entry);
+    if (message.type() === "error") diagnostics.errors.push(entry);
   });
-  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("pageerror", (error) => {
+    const entry = `pageerror: ${error.message}`;
+    diagnostics.allMessages.push(entry);
+    diagnostics.errors.push(entry);
+  });
 };
 
 const submitImport = async (page: Page, sourceName: string, rawText: string) => {
@@ -114,8 +156,18 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await loginWithCredentials(page, "test", "test1234");
   });
 
-  test.afterEach(async ({ page }) => {
-    expect(browserErrors.get(page) ?? []).toEqual([]);
+  test.afterEach(async ({ page }, testInfo) => {
+    const fixture = projectFixture(testInfo);
+    const diagnostics = browserDiagnostics.get(page) ?? { allMessages: [], errors: [] };
+    expect(diagnostics.errors).toEqual([]);
+    const browserOutput = diagnostics.allMessages.join("\n");
+    for (const name of PROTECTED_FIELD_NAMES) expect(browserOutput).not.toContain(name);
+    for (const secret of projectProtectedValues(
+      fixture.project,
+      fixture.token,
+      fixture.phoneBase,
+    ))
+      expect(browserOutput).not.toContain(secret);
   });
 
   test("one pasted trusted batch splits and applies auto-publication, risk, and duplicate gates", async ({
@@ -243,11 +295,6 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await page.getByText("更多处理", { exact: true }).click();
     await expect(page.getByRole("button", { name: "暂停自动发布" })).toBeVisible();
 
-    // The projects are deliberately serialized with one worker. WebKit performs
-    // the irreversible emergency-pause mutation after Chromium and Firefox have
-    // exercised the same control and the rest of the workflow.
-    if (fixture.project !== "webkit") return;
-
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: "暂停自动发布" }).click();
     const raw = `招聘 E2E_PAUSED_SAFE_${fixture.token}，合成联系电话：${syntheticPhone(fixture.phoneBase + 6)}`;
@@ -282,25 +329,13 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     expect(errorResponse.status()).toBe(422);
     const errorBody = await errorResponse.text();
 
-    const forbiddenNames = [
-      "raw_text_ciphertext",
-      "raw_fragment_ciphertext",
-      "contact_candidates_ciphertext",
-      "contact_hashes",
-      "encryption_key_version",
-      "normalized_fingerprint",
-    ];
     const forbiddenSecrets = [
       ...workflow.sensitiveValues,
       privateErrorValue,
-      "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      "e2e-only-nonproduction-contact-pepper",
-      "deliberately-invalid-outside-local-e2e",
-      "e2e-deterministic-v1",
-      "openai-compatible",
+      ...E2E_SECRET_VALUES,
     ];
     for (const body of [publicHtml, browserJson ?? "", errorBody]) {
-      for (const name of forbiddenNames) expect(body).not.toContain(name);
+      for (const name of PROTECTED_FIELD_NAMES) expect(body).not.toContain(name);
       for (const secret of forbiddenSecrets) expect(body).not.toContain(secret);
     }
   });
