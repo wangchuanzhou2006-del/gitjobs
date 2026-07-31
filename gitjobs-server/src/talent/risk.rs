@@ -1,6 +1,6 @@
 use crate::talent::{
     DUPLICATE_HIGH_THRESHOLD, DUPLICATE_MEDIUM_THRESHOLD, DuplicateCandidate, RiskLevel, RiskReason,
-    RuleHints, SourceTrust, TalentKind, ValidatedExtraction,
+    RuleHints, SourceTrust, TalentKind, ValidatedExtraction, canonical_model_risk,
 };
 
 pub(crate) const RISK_VERSION: &str = "talent-risk-v1";
@@ -50,6 +50,14 @@ impl RiskEngine {
 
         for candidate in input.rule_hints.risk_candidates {
             push_reason(&mut reasons, candidate.reason);
+        }
+        if !input.extraction.safe.risk_candidates.is_empty() {
+            score += 30;
+        }
+        for candidate in &input.extraction.safe.risk_candidates {
+            if let Some(reason) = canonical_model_risk(&candidate.code) {
+                push_reason(&mut reasons, reason);
+            }
         }
         if input.identity_anomaly {
             push_reason(
@@ -338,8 +346,8 @@ mod tests {
     use chrono::Utc;
 
     use crate::talent::{
-        ContactCandidate, ContactType, DuplicateCandidate, RiskLevel, SourceTrust, TalentExtraction,
-        TalentKind, ValidatedExtraction,
+        ContactCandidate, ContactType, DuplicateCandidate, RiskLevel, RiskReason, SourceTrust,
+        TalentExtraction, TalentKind, ValidatedExtraction,
     };
 
     use super::{
@@ -434,6 +442,49 @@ mod tests {
 
     fn codes(reasons: &[crate::talent::RiskReason]) -> Vec<&str> {
         reasons.iter().map(|reason| reason.code.as_str()).collect()
+    }
+
+    #[test]
+    fn model_only_risks_force_review_and_server_rules_decide_hard_blocks() {
+        let mut extraction = complete_hiring(0.95);
+        extraction.safe.risk_candidates.push(RiskReason {
+            code: "fee_solicitation".to_owned(),
+            explanation: "provider-controlled explanation".to_owned(),
+            evidence: Some("provider-controlled evidence".to_owned()),
+            hard_block: false,
+        });
+
+        let assessment = assess(
+            extraction.clone(),
+            SourceTrust::Trusted,
+            "hiring cook",
+            false,
+            false,
+            vec![],
+        );
+
+        assert!(assessment.hard_block);
+        assert_eq!(assessment.level, RiskLevel::High);
+        assert!(codes(&assessment.reasons).contains(&"fee_solicitation"));
+        let reason = assessment
+            .reasons
+            .iter()
+            .find(|reason| reason.code == "fee_solicitation")
+            .unwrap();
+        assert!(reason.hard_block);
+        assert!(reason.evidence.is_none());
+        assert_ne!(reason.explanation, "provider-controlled explanation");
+
+        let decision = AutoPublishPolicy.decide(AutoPublishInput {
+            global_enabled: true,
+            source_trust: SourceTrust::Trusted,
+            source_enabled: true,
+            source_confirmed: true,
+            assessment,
+            extraction,
+            duplicates: vec![],
+        });
+        assert!(!decision.eligible);
     }
 
     #[test]

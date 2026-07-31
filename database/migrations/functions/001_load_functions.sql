@@ -76,6 +76,7 @@
 {{ template "talent/upsert_talent_source.sql" }}
 {{ template "talent/create_talent_import_batch.sql" }}
 {{ template "talent/list_talent_import_batches.sql" }}
+{{ template "talent/talent_audit_safe_jsonb.sql" }}
 {{ template "talent/claim_talent_import_item.sql" }}
 {{ template "talent/complete_talent_import_item.sql" }}
 {{ template "talent/fail_talent_import_item.sql" }}
@@ -92,6 +93,13 @@
 {{ template "talent/get_talent_runtime_settings.sql" }}
 {{ template "talent/set_talent_source_status.sql" }}
 {{ template "talent/cleanup_talent_raw_data.sql" }}
+{{ template "talent/upsert_talent_source_subscription.sql" }}
+{{ template "talent/list_talent_source_subscriptions.sql" }}
+{{ template "talent/claim_talent_source_subscription.sql" }}
+{{ template "talent/complete_talent_source_run.sql" }}
+{{ template "talent/set_talent_source_subscription_enabled.sql" }}
+{{ template "talent/reserve_talent_source_item.sql" }}
+{{ template "talent/release_talent_source_item.sql" }}
 
 {{ template "workers/archive_expired_jobs.sql" }}
 

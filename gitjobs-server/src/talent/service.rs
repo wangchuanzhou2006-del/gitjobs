@@ -29,7 +29,6 @@ use crate::{
 
 const RAW_RETENTION_DAYS: i64 = 90;
 const DUPLICATE_LIMIT: u16 = 20;
-const BATCH_AAD: &[u8] = b"talent-import:batch:v1";
 
 pub(crate) struct TalentServices {
     pub import: Arc<ImportService>,
@@ -117,7 +116,7 @@ fn crypto_from_config(config: &TalentConfig) -> Result<(Arc<TalentCrypto>, u32)>
                         "1".to_owned(),
                         "0000000000000000000000000000000000000000000000000000000000000000".to_owned(),
                     )]),
-                    "disabled-talent-service".to_owned(),
+                    "disabled-talent-service-no-contact-data-v1".to_owned(),
                 )
                 .context("error creating disabled talent crypto")?,
             ),
@@ -260,9 +259,10 @@ impl ImportService {
             return Err(ImportError::Disabled);
         }
         let fragments = split_messages(&input.raw_text, self.limits).map_err(map_split_error)?;
+        let batch_id = Uuid::new_v4();
         let batch = self
             .crypto
-            .encrypt(input.raw_text.as_bytes(), batch_aad())
+            .encrypt(input.raw_text.as_bytes(), &batch_aad(batch_id))
             .map_err(|_| ImportError::Encryption)?;
         let items = fragments
             .iter()
@@ -271,13 +271,17 @@ impl ImportService {
                     .analyze(&fragment.text)
                     .kind_hint
                     .unwrap_or(TalentKind::Uncertain);
+                let position = u32::try_from(fragment.position).map_err(|_| ImportError::InvalidInput)?;
+                let item_id = Uuid::new_v4();
+                let aad = fragment_aad(batch_id, item_id, position);
                 let encrypted = self
                     .crypto
-                    .encrypt(fragment.text.as_bytes(), &fragment_aad(fragment.position))
+                    .encrypt(fragment.text.as_bytes(), &aad)
                     .map_err(|_| ImportError::Encryption)?;
                 let encryption_key_version = self.checked_key_version(&encrypted)?;
                 Ok(NewTalentImportItem {
-                    position: u32::try_from(fragment.position).map_err(|_| ImportError::InvalidInput)?,
+                    item_id,
+                    position,
                     raw_fragment_ciphertext: encrypted.bytes,
                     encryption_key_version,
                     kind,
@@ -288,6 +292,7 @@ impl ImportService {
         let encryption_key_version = self.checked_key_version(&batch)?;
         let talent_import = NewTalentImport {
             source_type: input.source_type,
+            batch_id,
             source_name: input.source_name,
             imported_by: Some(actor_id),
             raw_text_ciphertext: batch.bytes,
@@ -298,11 +303,15 @@ impl ImportService {
             raw_delete_after: Some(Utc::now() + TimeDelta::days(RAW_RETENTION_DAYS)),
             items,
         };
-        let batch_id = self
+        let persisted_batch_id = self
             .db
             .create_talent_import(talent_import)
             .await
             .map_err(|_| ImportError::Persistence)?;
+
+        if persisted_batch_id != batch_id {
+            return Err(ImportError::Persistence);
+        }
 
         Ok(ImportReceipt {
             batch_id,
@@ -328,12 +337,12 @@ fn key_version(value: &EncryptedValue) -> Result<u32, ImportError> {
     canonical_key_version(&value.key_version).map_err(|_| ImportError::Encryption)
 }
 
-pub(crate) const fn batch_aad() -> &'static [u8] {
-    BATCH_AAD
+pub(crate) fn batch_aad(batch_id: Uuid) -> Vec<u8> {
+    format!("talent-import:batch:v1:{batch_id}").into_bytes()
 }
 
-pub(crate) fn fragment_aad(position: usize) -> Vec<u8> {
-    format!("talent-import:fragment:v1:{position}").into_bytes()
+pub(crate) fn fragment_aad(batch_id: Uuid, item_id: Uuid, position: u32) -> Vec<u8> {
+    format!("talent-import:fragment:v1:{batch_id}:{item_id}:{position}").into_bytes()
 }
 
 pub(crate) fn contacts_aad(item_id: Uuid) -> Vec<u8> {
@@ -398,7 +407,6 @@ impl ReviewService {
             .map_err(|_| ReviewError::Persistence)?;
         let raw_fragment = match (&item.raw_fragment_ciphertext, item.encryption_key_version) {
             (Some(bytes), Some(version)) => {
-                let position = usize::try_from(item.position).map_err(|_| ReviewError::InvalidState)?;
                 let plaintext = self
                     .crypto
                     .decrypt(
@@ -406,7 +414,7 @@ impl ReviewService {
                             key_version: version.to_string(),
                             bytes: bytes.clone(),
                         },
-                        &fragment_aad(position),
+                        &fragment_aad(item.batch_id, item.item_id, item.position),
                     )
                     .map_err(|_| ReviewError::ProtectedData)?;
                 String::from_utf8(plaintext).map_err(|_| ReviewError::ProtectedData)?
@@ -725,7 +733,6 @@ impl ReviewService {
         let validated = validate_extraction(extraction).map_err(|_| ReviewError::InvalidExtraction)?;
         let hints = match (item.raw_fragment_ciphertext.as_ref(), item.encryption_key_version) {
             (Some(bytes), Some(version)) => {
-                let position = usize::try_from(item.position).map_err(|_| ReviewError::InvalidState)?;
                 let plaintext = self
                     .crypto
                     .decrypt(
@@ -733,7 +740,7 @@ impl ReviewService {
                             key_version: version.to_string(),
                             bytes: bytes.clone(),
                         },
-                        &fragment_aad(position),
+                        &fragment_aad(item.batch_id, item.item_id, item.position),
                     )
                     .map_err(|_| ReviewError::ProtectedData)?;
                 let fragment = String::from_utf8(plaintext).map_err(|_| ReviewError::ProtectedData)?;
@@ -879,22 +886,14 @@ pub(crate) fn record_draft(
         experience_years: extraction.experience_years,
         hours_per_day: extraction.hours_per_day,
         rest_days_per_month: extraction.rest_days_per_month,
-        lodging: extraction.lodging.as_deref().and_then(parse_bool),
-        housing_allowance: extraction.housing_allowance.map(|value| value > 0),
+        lodging: extraction.lodging.clone(),
+        housing_allowance: extraction.housing_allowance,
         availability: extraction.availability.clone(),
         urgency: extraction.urgency.clone(),
         source_label: Some(item.source_name.clone()),
         published_at: extraction.published_at,
         expires_at: None,
     })
-}
-
-fn parse_bool(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "provided" | "1" => Some(true),
-        "false" | "no" | "none" | "0" => Some(false),
-        _ => None,
-    }
 }
 
 pub(crate) fn validation_issues(issues: &[ValidationIssue]) -> Value {
@@ -962,7 +961,7 @@ mod tests {
 
     use super::{
         ImportError, ImportService, NewImport, ReviewService, batch_aad, canonical_key_version, contacts_aad,
-        crypto_from_config, fragment_aad, safe_snapshot,
+        crypto_from_config, fragment_aad, record_draft, safe_snapshot,
     };
 
     fn crypto() -> Arc<TalentCrypto> {
@@ -973,7 +972,7 @@ mod tests {
                     "1".to_owned(),
                     "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
                 )]),
-                "test-contact-pepper".to_owned(),
+                "synthetic-contact-pepper-material-v1".to_owned(),
             )
             .unwrap(),
         )
@@ -1016,7 +1015,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn encrypts_batch_and_fragments_with_distinct_aad() {
+    async fn encrypts_batch_and_fragments_with_identity_bound_aad() {
         let crypto = crypto();
         let decryptor = crypto.clone();
         let mut db = MockDB::new();
@@ -1035,20 +1034,33 @@ mod tests {
                     key_version: import.items[1].encryption_key_version.to_string(),
                     bytes: import.items[1].raw_fragment_ciphertext.clone(),
                 };
-                decryptor
-                    .decrypt(&batch, batch_aad())
-                    .is_ok_and(|plaintext| plaintext == b"first\n\n\nsecond")
-                    && decryptor.decrypt(&batch, &fragment_aad(0)).is_err()
+                let correct_batch_aad = batch_aad(import.batch_id);
+                let first_aad =
+                    fragment_aad(import.batch_id, import.items[0].item_id, import.items[0].position);
+                let second_aad =
+                    fragment_aad(import.batch_id, import.items[1].item_id, import.items[1].position);
+                import.batch_id != Uuid::nil()
+                    && import.items[0].item_id != import.items[1].item_id
                     && decryptor
-                        .decrypt(&first, &fragment_aad(0))
+                        .decrypt(&batch, &correct_batch_aad)
+                        .is_ok_and(|plaintext| plaintext == b"first\n\n\nsecond")
+                    && decryptor.decrypt(&batch, &batch_aad(Uuid::nil())).is_err()
+                    && decryptor
+                        .decrypt(&first, &first_aad)
                         .is_ok_and(|plaintext| plaintext == b"first")
-                    && decryptor.decrypt(&first, batch_aad()).is_err()
+                    && decryptor.decrypt(&first, &correct_batch_aad).is_err()
                     && decryptor
-                        .decrypt(&second, &fragment_aad(1))
+                        .decrypt(&first, &fragment_aad(Uuid::nil(), import.items[0].item_id, 0))
+                        .is_err()
+                    && decryptor
+                        .decrypt(&first, &fragment_aad(import.batch_id, Uuid::nil(), 0))
+                        .is_err()
+                    && decryptor
+                        .decrypt(&second, &second_aad)
                         .is_ok_and(|plaintext| plaintext == b"second")
-                    && decryptor.decrypt(&second, &fragment_aad(0)).is_err()
+                    && decryptor.decrypt(&second, &first_aad).is_err()
             })
-            .returning(|_| Ok(Uuid::nil()));
+            .returning(|import| Ok(import.batch_id));
         let service = ImportService::new(Arc::new(db), crypto, 1, None, None, None);
 
         let receipt = service
@@ -1056,7 +1068,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(receipt.batch_id, Uuid::nil());
+        assert_ne!(receipt.batch_id, Uuid::nil());
         assert_eq!(receipt.fragment_count, 2);
     }
 
@@ -1119,7 +1131,7 @@ mod tests {
                 ]
                 .into_iter()
                 .collect(),
-                contact_pepper: Some(SecretValue::new("synthetic-test-pepper")),
+                contact_pepper: Some(SecretValue::new("synthetic-contact-pepper-material-v1")),
             },
             ..TalentConfig::default()
         };
@@ -1297,6 +1309,23 @@ mod tests {
             review.publish(item_id, 8, actor_id).await.unwrap_err(),
             super::ReviewError::Conflict
         );
+    }
+
+    #[test]
+    fn record_draft_preserves_lodging_text_and_housing_allowance_amount() {
+        let item = review_item_fixture(Uuid::new_v4());
+        let extraction = TalentExtraction {
+            kind: TalentKind::Hiring,
+            title: Some("\u{6d4b}\u{8bd5}\u{9910}\u{996e}\u{5c97}\u{4f4d}".to_owned()),
+            lodging: Some("\u{63d0}\u{4f9b}".to_owned()),
+            housing_allowance: Some(1_200),
+            ..TalentExtraction::default()
+        };
+
+        let draft = record_draft(&item, &extraction).unwrap();
+
+        assert_eq!(draft.lodging.as_deref(), Some("\u{63d0}\u{4f9b}"));
+        assert_eq!(draft.housing_allowance, Some(1_200));
     }
 
     #[tokio::test]

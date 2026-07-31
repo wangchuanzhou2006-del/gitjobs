@@ -45,7 +45,7 @@ pub(crate) struct TalentRecord {
     pub hours_per_day: Option<u8>,
     pub rest_days: Option<u8>,
     pub lodging: Option<String>,
-    pub housing_allowance: Option<bool>,
+    pub housing_allowance: Option<u32>,
     pub availability: Option<String>,
     pub urgency: Option<String>,
     pub credibility: Option<u8>,
@@ -89,11 +89,10 @@ impl TalentRecord {
             .map_or_else(|| "待确认".to_owned(), |days| format!("{days} 天/月"))
     }
 
-    pub(crate) fn housing_allowance_label(&self) -> &str {
+    pub(crate) fn housing_allowance_label(&self) -> String {
         match self.housing_allowance {
-            Some(true) => "提供",
-            Some(false) => "不提供",
-            None => "待确认",
+            Some(amount) => format!("{amount} 元/月"),
+            None => "待确认".to_owned(),
         }
     }
 
@@ -232,7 +231,7 @@ pub(crate) fn prototype_hiring_records() -> Vec<TalentRecord> {
                     }
                     .to_owned(),
                 ),
-                housing_allowance: Some(index % 2 != 0),
+                housing_allowance: (index % 2 != 0).then_some(800),
                 availability: Some("一周内到岗（原型）".to_owned()),
                 urgency: Some(
                     if index < 2 {
@@ -370,7 +369,7 @@ pub(crate) fn prototype_seeking_records() -> Vec<TalentRecord> {
                     }
                     .to_owned(),
                 ),
-                housing_allowance: Some(index % 2 == 0),
+                housing_allowance: (index % 2 == 0).then_some(600),
                 availability: Some(
                     if index < 3 {
                         "随时到岗（原型）"

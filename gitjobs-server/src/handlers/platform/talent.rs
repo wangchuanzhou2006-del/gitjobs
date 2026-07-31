@@ -127,9 +127,7 @@ fn public_record(record: PublicTalentRecord, mode: TalentMode) -> TalentRecord {
         experience_years: record.experience_years,
         hours_per_day: record.hours_per_day,
         rest_days: record.rest_days_per_month,
-        lodging: record
-            .lodging
-            .map(|value| if value { "提供" } else { "不提供" }.to_owned()),
+        lodging: record.lodging,
         housing_allowance: record.housing_allowance,
         availability: record.availability,
         urgency: record.urgency,
@@ -181,8 +179,8 @@ mod tests {
             experience_years: None,
             hours_per_day: None,
             rest_days_per_month: None,
-            lodging: None,
-            housing_allowance: Some(true),
+            lodging: Some("\u{63d0}\u{4f9b}".to_owned()),
+            housing_allowance: Some(1_200),
             availability: None,
             urgency: None,
             source_label: None,
@@ -230,8 +228,10 @@ mod tests {
         assert!(html.contains(r#""experienceYears":null"#));
         assert!(html.contains(r#""hoursPerDay":null"#));
         assert!(html.contains(r#""restDays":null"#));
-        assert!(html.contains(r#""lodging":null"#));
-        assert!(html.contains(r#""housingAllowance":true"#));
+        assert!(html.contains("\"lodging\":\"\u{63d0}\u{4f9b}\""));
+        assert!(html.contains(r#""housingAllowance":1200"#));
+        assert!(html.contains("\u{63d0}\u{4f9b}"));
+        assert!(html.contains("1200 \u{5143}/\u{6708}"));
         assert!(html.contains(r#""credibility":null"#));
         assert!(html.contains(r#""roles":["厨师","炒锅"]"#));
         assert!(html.contains("薪资范围待确认"));

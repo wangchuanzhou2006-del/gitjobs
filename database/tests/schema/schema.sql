@@ -3,7 +3,7 @@
 -- ============================================================================
 
 begin;
-select plan(195);
+select plan(220);
 
 create function test_has_foreign_key(
     child_table text,
@@ -77,6 +77,9 @@ select has_table('talent_records');
 select has_table('talent_contacts');
 select has_table('talent_review_events');
 select has_table('talent_runtime_settings');
+select has_table('talent_source_subscriptions');
+select has_table('talent_source_runs');
+select has_table('talent_source_seen_items');
 
 -- Test: application columns should match expected
 select columns_are('application', array[
@@ -374,7 +377,8 @@ select columns_are('talent_import_items', array[
     'kind', 'status', 'extraction', 'extraction_confidence',
     'validation_errors', 'risk_score', 'risk_level', 'risk_reasons',
     'duplicate_candidates', 'published_record_id', 'lock_version',
-    'created_at', 'processed_at', 'reviewed_at', 'updated_at'
+    'created_at', 'processed_at', 'reviewed_at', 'updated_at',
+    'claim_token', 'claim_version', 'claim_expires_at'
 ]);
 
 select columns_are('talent_records', array[
@@ -386,6 +390,23 @@ select columns_are('talent_records', array[
     'withdrawn_at'
 ]);
 
+select results_eq(
+    $$
+    select column_name, data_type
+    from information_schema.columns
+    where table_schema = current_schema()
+      and table_name = 'talent_records'
+      and column_name in ('lodging', 'housing_allowance')
+    order by column_name
+    $$,
+    $$
+    values
+        ('housing_allowance'::text, 'bigint'::text),
+        ('lodging'::text, 'text'::text)
+    $$,
+    'talent records preserve lodging text and housing allowance amounts'
+);
+
 select columns_are('talent_contacts', array[
     'contact_id', 'record_id', 'contact_type', 'ciphertext',
     'encryption_key_version', 'normalized_hash', 'masked_value',
@@ -396,12 +417,33 @@ select columns_are('talent_review_events', array[
     'event_id', 'item_id', 'record_id', 'actor_type', 'actor_user_id',
     'action', 'reason', 'before_snapshot', 'after_snapshot',
     'model_provider', 'model_name', 'prompt_version', 'rule_version',
-    'policy_version', 'automatic_reason', 'created_at'
+    'policy_version', 'automatic_reason', 'created_at',
+    'resource_scope', 'source_id', 'batch_id'
 ]);
 
 select columns_are('talent_runtime_settings', array[
     'singleton', 'auto_publish_enabled', 'updated_by', 'updated_at'
 ]);
+
+select columns_are('talent_source_subscriptions', array[
+    'subscription_id', 'source_id', 'public_url', 'keywords',
+    'interval_minutes', 'enabled', 'next_run_at', 'claimed_at',
+    'incremental_cursor', 'etag', 'last_modified',
+    'consecutive_failures', 'last_success_at', 'last_error_at',
+    'last_error_code', 'created_by', 'created_at', 'updated_at'
+]);
+
+select columns_are('talent_source_runs', array[
+    'run_id', 'subscription_id', 'discovered_count',
+    'accepted_count', 'duplicate_count', 'failed_count',
+    'error_code', 'started_at', 'completed_at'
+]);
+
+select columns_are('talent_source_seen_items', array[
+    'subscription_id', 'source_item_id', 'content_fingerprint',
+    'first_seen_at'
+]);
+
 -- Test: check expected functions exist
 select has_function('get_user_by_email');
 select has_function('get_user_by_id_verified');
@@ -523,7 +565,13 @@ select ok(test_has_foreign_key('talent_contacts', 'record_id', 'talent_records',
 select ok(test_has_foreign_key('talent_review_events', 'item_id', 'talent_import_items', 'item_id', 'r'), 'talent_review_events.item_id should delete restrict');
 select ok(test_has_foreign_key('talent_review_events', 'record_id', 'talent_records', 'record_id', 'n'), 'talent_review_events.record_id should delete set null');
 select ok(test_has_foreign_key('talent_review_events', 'actor_user_id', 'user', 'user_id', 'n'), 'talent_review_events.actor_user_id should delete set null');
+select ok(test_has_foreign_key('talent_review_events', 'source_id', 'talent_sources', 'source_id', 'r'), 'talent_review_events.source_id should delete restrict');
+select ok(test_has_foreign_key('talent_review_events', 'batch_id', 'talent_import_batches', 'batch_id', 'r'), 'talent_review_events.batch_id should delete restrict');
 select ok(test_has_foreign_key('talent_runtime_settings', 'updated_by', 'user', 'user_id', 'n'), 'talent_runtime_settings.updated_by should delete set null');
+select ok(test_has_foreign_key('talent_source_subscriptions', 'source_id', 'talent_sources', 'source_id', 'c'), 'talent_source_subscriptions.source_id should delete cascade');
+select ok(test_has_foreign_key('talent_source_subscriptions', 'created_by', 'user', 'user_id', 'n'), 'talent_source_subscriptions.created_by should delete set null');
+select ok(test_has_foreign_key('talent_source_runs', 'subscription_id', 'talent_source_subscriptions', 'subscription_id', 'c'), 'talent_source_runs.subscription_id should delete cascade');
+select ok(test_has_foreign_key('talent_source_seen_items', 'subscription_id', 'talent_source_subscriptions', 'subscription_id', 'c'), 'talent_source_seen_items.subscription_id should delete cascade');
 
 -- Test: singleton and uniqueness invariants should exist
 select has_check('talent_runtime_settings', 'talent_runtime_settings_singleton_check');
@@ -559,6 +607,39 @@ select ok(exists (
       and pg_get_indexdef(index_definition.indexrelid) like '%(published_record_id)%'
       and pg_get_expr(index_definition.indpred, index_definition.indrelid) = '(published_record_id IS NOT NULL)'
 ), 'talent_import_item_published_record_idx should uniquely index non-null published_record_id');
+
+select has_pk('talent_source_subscriptions');
+select has_pk('talent_source_runs');
+select has_pk('talent_source_seen_items');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_source_subscriptions_source_id_public_url_key'
+      and index_definition.indisunique
+), 'talent_source_subscriptions(source_id, public_url) should be unique');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_source_subscriptions_due_idx'
+      and pg_get_expr(index_definition.indpred, index_definition.indrelid) like '%enabled%'
+), 'talent_source_subscriptions_due_idx should be a partial index on enabled subscriptions');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'talent_source_seen_items_content_fingerprint_key'
+      and index_definition.indisunique
+), 'talent_source_seen_items(subscription_id, content_fingerprint) should be unique');
+
+select has_check('talent_source_subscriptions', 'talent_source_subscriptions_interval_minutes_check');
+select has_check('talent_source_subscriptions', 'talent_source_subscriptions_keywords_check');
+select has_check('talent_source_subscriptions', 'talent_source_subscriptions_public_url_check');
+select has_check('talent_source_seen_items', 'talent_source_seen_items_content_fingerprint_check');
 
 -- ============================================================================
 -- CLEANUP

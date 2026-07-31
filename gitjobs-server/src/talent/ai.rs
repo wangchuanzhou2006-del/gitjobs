@@ -8,6 +8,8 @@ use thiserror::Error;
 use crate::{config::TalentAiConfig, talent::TalentExtraction};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_OUTPUT_TOKENS: u16 = 2_048;
+pub(crate) const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const SYSTEM_PROMPT: &str = "talent-extract-v1: Extract structured talent information from the supplied text. Return a JSON object matching the requested schema. Use null when uncertain. Never claim verification or truth.";
 
 pub(crate) struct ExtractionRequest {
@@ -62,6 +64,8 @@ pub(crate) enum AiError {
     HttpStatus(StatusCode),
     #[error("AI provider returned an invalid response")]
     InvalidResponse,
+    #[error("AI provider response exceeds the allowed size")]
+    ResponseTooLarge,
     #[error("AI provider response has no usable choice")]
     MissingChoice,
     #[error("AI provider choice content is not JSON")]
@@ -73,6 +77,7 @@ pub(crate) enum AiError {
 #[derive(Serialize)]
 struct CompletionRequest<'a> {
     model: &'a str,
+    max_tokens: u16,
     messages: [ChatMessage<'a>; 2],
     temperature: u8,
     response_format: ResponseFormat,
@@ -88,6 +93,77 @@ struct ChatMessage<'a> {
 struct ResponseFormat {
     #[serde(rename = "type")]
     kind: &'static str,
+    json_schema: serde_json::Value,
+}
+fn extraction_response_format() -> ResponseFormat {
+    ResponseFormat {
+        kind: "json_schema",
+        json_schema: serde_json::json!({
+            "name": "talent_extraction_v1",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "kind", "confidence", "title", "scene", "region", "city", "district",
+                    "salaryMin", "salaryMax", "roles", "skills", "experienceYears",
+                    "hoursPerDay", "restDaysPerMonth", "lodging", "housingAllowance",
+                    "availability", "urgency", "publishedAt", "contacts", "missingFields",
+                    "riskCandidates"
+                ],
+                "properties": {
+                    "kind": {"type": "string", "enum": ["hiring", "seeking", "irrelevant", "uncertain"]},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "title": {"type": ["string", "null"]},
+                    "scene": {"type": ["string", "null"]},
+                    "region": {"type": ["string", "null"]},
+                    "city": {"type": ["string", "null"]},
+                    "district": {"type": ["string", "null"]},
+                    "salaryMin": {"type": ["integer", "null"], "minimum": 0},
+                    "salaryMax": {"type": ["integer", "null"], "minimum": 0},
+                    "roles": {"type": "array", "maxItems": 50, "items": {"type": "string"}},
+                    "skills": {"type": "array", "maxItems": 50, "items": {"type": "string"}},
+                    "experienceYears": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+                    "hoursPerDay": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+                    "restDaysPerMonth": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+                    "lodging": {"type": ["string", "null"]},
+                    "housingAllowance": {"type": ["integer", "null"], "minimum": 0},
+                    "availability": {"type": ["string", "null"]},
+                    "urgency": {"type": ["string", "null"]},
+                    "publishedAt": {"type": ["string", "null"], "format": "date-time"},
+                    "contacts": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["contact_type", "value"],
+                            "properties": {
+                                "contact_type": {"type": "string", "enum": ["phone", "wechat", "qq", "other"]},
+                                "value": {"type": "string"}
+                            }
+                        }
+                    },
+                    "missingFields": {"type": "array", "maxItems": 50, "items": {"type": "string"}},
+                    "riskCandidates": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["code", "explanation", "evidence", "hard_block"],
+                            "properties": {
+                                "code": {"type": "string"},
+                                "explanation": {"type": "string"},
+                                "evidence": {"type": ["string", "null"]},
+                                "hard_block": {"type": "boolean"}
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+    }
 }
 
 #[derive(Deserialize)]
@@ -109,7 +185,11 @@ struct CompletionMessage {
 impl TalentAiProvider for OpenAiCompatibleProvider {
     async fn extract(&self, request: ExtractionRequest) -> Result<TalentExtraction, AiError> {
         tokio::time::timeout(self.request_timeout, async {
-            let endpoint = format!("{}/chat/completions", self.config.base_url.trim_end_matches('/'));
+            let endpoint = self
+                .config
+                .base_url
+                .join("chat/completions")
+                .map_err(|_| AiError::Transport)?;
             let payload = CompletionRequest {
                 model: &self.config.model,
                 messages: [
@@ -123,9 +203,10 @@ impl TalentAiProvider for OpenAiCompatibleProvider {
                     },
                 ],
                 temperature: 0,
-                response_format: ResponseFormat { kind: "json_object" },
+                max_tokens: MAX_OUTPUT_TOKENS,
+                response_format: extraction_response_format(),
             };
-            let response = self
+            let mut response = self
                 .client
                 .post(endpoint)
                 .bearer_auth(self.config.api_key.expose_secret())
@@ -142,13 +223,21 @@ impl TalentAiProvider for OpenAiCompatibleProvider {
             if !response.status().is_success() {
                 return Err(AiError::HttpStatus(response.status()));
             }
-            let completion: CompletionResponse = response.json().await.map_err(|error| {
+            let mut body = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|error| {
                 if error.is_timeout() {
                     AiError::Timeout
                 } else {
                     AiError::InvalidResponse
                 }
-            })?;
+            })? {
+                if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+                    return Err(AiError::ResponseTooLarge);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            let completion: CompletionResponse =
+                serde_json::from_slice(&body).map_err(|_| AiError::InvalidResponse)?;
             let content = completion
                 .choices
                 .into_iter()
@@ -183,7 +272,7 @@ mod tests {
         talent::{ContactCandidate, ContactType, TalentExtraction, TalentKind},
     };
 
-    use super::{AiError, ExtractionRequest, OpenAiCompatibleProvider, TalentAiProvider};
+    use super::{AiError, ExtractionRequest, MAX_RESPONSE_BYTES, OpenAiCompatibleProvider, TalentAiProvider};
 
     #[derive(Clone)]
     struct MockResponse {
@@ -199,9 +288,34 @@ mod tests {
         assert_eq!(headers.get("authorization").unwrap(), "Bearer test-api-key");
         assert_eq!(payload["model"], "test-model");
         assert_eq!(payload["temperature"], 0);
+        assert_eq!(payload["max_tokens"], 2_048);
+        assert_eq!(payload["response_format"]["type"], "json_schema");
         assert_eq!(
-            payload["response_format"],
-            serde_json::json!({"type": "json_object"})
+            payload["response_format"]["json_schema"]["name"],
+            "talent_extraction_v1"
+        );
+        assert_eq!(payload["response_format"]["json_schema"]["strict"], true);
+        let schema = &payload["response_format"]["json_schema"]["schema"];
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "contacts")
+        );
+        assert_eq!(
+            schema["properties"]["contacts"]["items"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            schema["properties"]["riskCandidates"]["items"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            schema["properties"]["kind"]["enum"],
+            serde_json::json!(["hiring", "seeking", "irrelevant", "uncertain"])
         );
         assert!(
             payload["messages"][0]["content"]
@@ -223,7 +337,7 @@ mod tests {
         });
         OpenAiCompatibleProvider::new(
             TalentAiConfig {
-                base_url: format!("http://{address}/v1"),
+                base_url: reqwest::Url::parse(&format!("http://{address}/v1/")).unwrap(),
                 model: "test-model".to_owned(),
                 api_key: SecretValue::new("test-api-key"),
             },
@@ -240,6 +354,18 @@ mod tests {
             .unwrap()
     }
 
+    async fn oversized_chunked_completion_body() -> Response<Body> {
+        let chunks = [
+            Ok::<_, Infallible>(Bytes::from(vec![b'a'; MAX_RESPONSE_BYTES / 2 + 1])),
+            Ok::<_, Infallible>(Bytes::from(vec![b'b'; MAX_RESPONSE_BYTES / 2 + 1])),
+        ];
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from_stream(futures::stream::iter(chunks)))
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn provider_deadline_includes_reading_the_response_body() {
         let app = Router::new().route("/v1/chat/completions", post(stalled_completion_body));
@@ -250,7 +376,7 @@ mod tests {
         });
         let provider = OpenAiCompatibleProvider::with_timeout(
             TalentAiConfig {
-                base_url: format!("http://{address}/v1"),
+                base_url: reqwest::Url::parse(&format!("http://{address}/v1/")).unwrap(),
                 model: "test-model".to_owned(),
                 api_key: SecretValue::new("test-api-key"),
             },
@@ -266,6 +392,32 @@ mod tests {
         .expect("provider should enforce its own deadline");
 
         assert!(matches!(result, Err(AiError::Timeout)));
+    }
+
+    #[tokio::test]
+    async fn provider_rejects_chunked_responses_above_the_strict_byte_limit() {
+        let app = Router::new().route("/v1/chat/completions", post(oversized_chunked_completion_body));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).into_future().await.unwrap();
+        });
+        let provider = OpenAiCompatibleProvider::new(
+            TalentAiConfig {
+                base_url: reqwest::Url::parse(&format!("http://{address}/v1/")).unwrap(),
+                model: "test-model".to_owned(),
+                api_key: SecretValue::new("test-api-key"),
+            },
+            reqwest::Client::new(),
+        );
+
+        let error = provider
+            .extract(ExtractionRequest::new("candidate text"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, AiError::ResponseTooLarge));
+        assert!(!error.to_string().contains("aaaaaaaaaaaaaaaa"));
     }
 
     fn valid_extraction() -> TalentExtraction {
@@ -373,7 +525,7 @@ mod tests {
     #[test]
     fn provider_config_redacts_its_secret_in_debug_output() {
         let config = TalentAiConfig {
-            base_url: "https://api.example.invalid/v1".to_owned(),
+            base_url: reqwest::Url::parse("https://api.example.invalid/v1/").unwrap(),
             model: "test-model".to_owned(),
             api_key: SecretValue::new("test-api-key"),
         };

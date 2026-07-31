@@ -1,6 +1,6 @@
 //! This module defines types to represent the server configuration.
 
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{collections::HashMap, fmt, net::IpAddr, path::PathBuf};
 
 use anyhow::Result;
 use deadpool_postgres::Config as DbConfig;
@@ -219,6 +219,12 @@ pub(crate) struct TalentConfig {
     /// Enable public prototype data while the talent import flow is unavailable.
     #[serde(default)]
     pub prototype_data: bool,
+    /// Enable scheduled updates from approved public sources.
+    #[serde(default)]
+    pub source_updates_enabled: bool,
+    /// Exact public hostnames that scheduled updates may access.
+    #[serde(default)]
+    pub allowed_public_hosts: Vec<String>,
     /// Encryption and contact deduplication secrets.
     #[serde(default)]
     pub encryption: TalentEncryptionConfig,
@@ -241,6 +247,10 @@ struct TalentConfigRepr {
     #[serde(default)]
     prototype_data: bool,
     #[serde(default)]
+    source_updates_enabled: bool,
+    #[serde(default)]
+    allowed_public_hosts: Vec<String>,
+    #[serde(default)]
     encryption: TalentEncryptionConfig,
     #[serde(default)]
     ai: Option<TalentAiConfigRepr>,
@@ -249,6 +259,8 @@ struct TalentConfigRepr {
 #[derive(Deserialize)]
 struct TalentAiConfigRepr {
     base_url: Option<String>,
+    #[serde(default)]
+    allow_local_http: bool,
     model: Option<String>,
     api_key: Option<SecretValue>,
 }
@@ -261,8 +273,10 @@ impl<'de> Deserialize<'de> for TalentConfig {
         let repr = TalentConfigRepr::deserialize(deserializer)?;
         let ai = if repr.enabled {
             let ai = repr.ai.ok_or_else(|| D::Error::missing_field("ai"))?;
+            let raw_base_url = ai.base_url.ok_or_else(|| D::Error::missing_field("ai.base_url"))?;
             Some(TalentAiConfig {
-                base_url: ai.base_url.ok_or_else(|| D::Error::missing_field("ai.base_url"))?,
+                base_url: validate_talent_ai_base_url(&raw_base_url, ai.allow_local_http)
+                    .map_err(D::Error::custom)?,
                 model: ai.model.ok_or_else(|| D::Error::missing_field("ai.model"))?,
                 api_key: ai.api_key.ok_or_else(|| D::Error::missing_field("ai.api_key"))?,
             })
@@ -273,16 +287,51 @@ impl<'de> Deserialize<'de> for TalentConfig {
         Ok(Self {
             enabled: repr.enabled,
             prototype_data: repr.prototype_data,
+            source_updates_enabled: repr.source_updates_enabled,
+            allowed_public_hosts: repr.allowed_public_hosts,
             encryption: repr.encryption,
             ai,
         })
     }
 }
 
+fn validate_talent_ai_base_url(value: &str, allow_local_http: bool) -> Result<reqwest::Url, &'static str> {
+    let mut url = reqwest::Url::parse(value).map_err(|_| "talent AI base URL is invalid")?;
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("talent AI base URL cannot contain credentials, query, or fragment");
+    }
+    if !matches!(url.path(), "/" | "/v1" | "/v1/") {
+        return Err("talent AI base URL path must be root or /v1");
+    }
+
+    match url.scheme() {
+        "https" => {}
+        "http" if allow_local_http && talent_ai_url_is_loopback(&url) => {}
+        _ => return Err("talent AI base URL must use HTTPS"),
+    }
+
+    if url.path() == "/v1" {
+        url.set_path("/v1/");
+    }
+    Ok(url)
+}
+
+fn talent_ai_url_is_loopback(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+}
+
 /// OpenAI-compatible talent extraction provider settings.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct TalentAiConfig {
-    pub base_url: String,
+    pub base_url: reqwest::Url,
     pub model: String,
     pub api_key: SecretValue,
 }
@@ -352,6 +401,8 @@ mod tests {
         let config = TalentConfig::default();
 
         assert!(!config.prototype_data);
+        assert!(!config.source_updates_enabled);
+        assert!(config.allowed_public_hosts.is_empty());
         assert!(config.encryption.active_version.is_none());
         assert!(config.ai.is_none());
         assert!(config.encryption.keys.is_empty());
@@ -405,9 +456,73 @@ mod tests {
         .unwrap();
 
         let ai = config.ai_config().unwrap();
-        assert_eq!(ai.base_url, "https://api.example.invalid/v1");
+        assert_eq!(ai.base_url.as_str(), "https://api.example.invalid/v1/");
         assert_eq!(ai.model, "test-model");
         assert_eq!(ai.api_key.expose_secret(), TEST_SECRET);
+    }
+
+    #[test]
+    fn enabled_talent_ai_rejects_unsafe_or_ambiguous_provider_urls() {
+        for base_url in [
+            "not a URL",
+            "http://api.example.invalid/v1",
+            "https://user:password@api.example.invalid/v1",
+            "https://api.example.invalid/v1?tenant=secret",
+            "https://api.example.invalid/v1#fragment",
+            "https://api.example.invalid/v1/chat/completions",
+        ] {
+            let value = serde_json::json!({
+                "enabled": true,
+                "ai": {
+                    "base_url": base_url,
+                    "model": "test-model",
+                    "api_key": TEST_SECRET,
+                },
+            });
+
+            assert!(
+                serde_json::from_value::<TalentConfig>(value).is_err(),
+                "provider URL should fail closed: {base_url}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_http_provider_requires_an_explicit_loopback_only_opt_in() {
+        let without_opt_in = serde_json::json!({
+            "enabled": true,
+            "ai": {
+                "base_url": "http://127.0.0.1:8080/v1",
+                "model": "test-model",
+                "api_key": TEST_SECRET,
+            },
+        });
+        let external_with_opt_in = serde_json::json!({
+            "enabled": true,
+            "ai": {
+                "base_url": "http://api.example.invalid/v1",
+                "allow_local_http": true,
+                "model": "test-model",
+                "api_key": TEST_SECRET,
+            },
+        });
+        let loopback_with_opt_in = serde_json::json!({
+            "enabled": true,
+            "ai": {
+                "base_url": "http://127.0.0.1:8080/v1",
+                "allow_local_http": true,
+                "model": "test-model",
+                "api_key": TEST_SECRET,
+            },
+        });
+
+        assert!(serde_json::from_value::<TalentConfig>(without_opt_in).is_err());
+        assert!(serde_json::from_value::<TalentConfig>(external_with_opt_in).is_err());
+        let config = serde_json::from_value::<TalentConfig>(loopback_with_opt_in).unwrap();
+        assert_eq!(
+            config.ai_config().unwrap().base_url.as_str(),
+            "http://127.0.0.1:8080/v1/"
+        );
     }
 
     #[test]

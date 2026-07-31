@@ -812,6 +812,71 @@ git add tests/e2e/dashboard/moderator/talent-import-review.spec.ts docs/operatio
 git commit -s -m "test: verify talent import review workflow"
 ```
 
+### Task 13: Add optional public-source subscriptions
+
+**Files:**
+- Create: `database/migrations/schema/0019_talent_source_subscriptions.sql`
+- Create: `database/migrations/functions/talent/claim_talent_source_subscription.sql`
+- Create: `database/migrations/functions/talent/complete_talent_source_run.sql`
+- Create: `database/migrations/functions/talent/upsert_talent_source_subscription.sql`
+- Create: `database/tests/functions/talent/source_subscriptions.sql`
+- Create: `gitjobs-server/src/talent/source_subscription.rs`
+- Modify: `gitjobs-server/src/talent/mod.rs`
+- Modify: `gitjobs-server/src/talent/service.rs`
+- Modify: `gitjobs-server/src/db/talent.rs`
+- Modify: `gitjobs-server/src/db/mock.rs`
+- Modify: `gitjobs-server/src/workers.rs`
+- Modify: `gitjobs-server/src/config.rs`
+- Modify: `config/examples/server.local.yml`
+- Modify: `gitjobs-server/src/handlers/dashboard/moderator/talent.rs`
+- Modify: `gitjobs-server/src/templates/dashboard/moderator/talent.rs`
+- Modify: `gitjobs-server/templates/dashboard/moderator/talent_import.html`
+- Modify: `database/migrations/functions/001_load_functions.sql`
+- Modify: `database/tests/schema/schema.sql`
+- Modify: `tests/e2e/dashboard/moderator/talent-import-review.spec.ts`
+- Create: `tests/e2e/dashboard/moderator/talent-source-subscriptions-visual.spec.ts`
+- Modify: `docs/operations/talent-import-review.md`
+
+**Interfaces:**
+- Consumes: the existing `ImportService`; collected text has no separate publication path.
+- Produces: Moderator-managed public source, keyword topic, update interval, enabled state, incremental cursor, and privacy-safe run summary.
+- Preserves: manual paste import, source trust, AI extraction, duplicate detection, risk gates, review, publication, and cleanup behavior.
+
+- [ ] **Step 1: Add subscription persistence and atomic claims**
+
+Store only approved public HTTPS URLs. A subscription belongs to one `talent_sources` row and contains normalized keywords, interval, enabled state, next run time, incremental cursor, conditional-request metadata, consecutive failure count, and last success/error timestamps. Store each run's discovered, accepted, duplicate, and failed counters without response bodies. Claim due subscriptions with `FOR UPDATE SKIP LOCKED`; one broken source must not block another.
+
+- [ ] **Step 2: Implement strict source safety and deterministic filtering**
+
+Allow collection only when the URL host is present in a server-side allowlist. Reject credentials, fragments, non-HTTPS schemes, IP literals, localhost, and redirects to a different or disallowed host. Resolve and reject private, loopback, link-local, multicast, and reserved addresses before every request. Limit redirects, response bytes, elapsed time, and requests per run. Match normalized keywords against title and text using deterministic case-insensitive rules before invoking AI.
+
+- [ ] **Step 3: Implement incremental public-feed collection**
+
+Support RSS and Atom first because they provide stable item identifiers and publication times. Use `ETag` and `Last-Modified` when available, then deduplicate entries by source item ID or normalized content fingerprint. Convert accepted entries to ordinary `NewImport` batches with source type `web`; never auto-publish from the collector itself. A failed fetch records a safe error code, applies bounded exponential backoff, and leaves the previous cursor intact.
+
+- [ ] **Step 4: Add the source worker and a mobile-first information radar**
+
+Run one low-frequency source worker alongside the existing talent processor. Add a mobile-first “信息雷达” view that inherits the existing product shell and visual tokens. Its first viewport shows one restrained live-search status band, what the system is watching, newly found count, and whether anything needs attention. This is the single expressive visual moment; the rest of the view stays quiet and direct.
+
+Adding a source is a one-column flow using the exact user-facing concepts “从哪里找”, “找什么”, and “多久找一次”, followed by an enabled switch and a bottom-fixed primary action on mobile. Use plain frequency choices such as “每天一次”, “每天两次”, and “每周一次”. Do not expose crawler, cursor, RSS, HTTP, concurrency, pagination waits, retries, request headers, or network tuning. Source rows show only name, watched topic, last update, and a plain-language state; editing opens a focused sheet or page rather than expanding parameters inline.
+
+At 360 CSS pixels the layout remains single-column, all interactive targets are at least 44 by 44 CSS pixels, long Chinese labels wrap without collision, the software keyboard does not cover the primary action, and no horizontal scroll appears. Desktop adds breathing room but preserves the same hierarchy instead of becoming an admin parameter grid. Respect reduced motion, visible keyboard focus, semantic labels, and non-color status cues.
+
+- [ ] **Step 5: Prove isolation and compatibility**
+
+Unit tests cover RSS/Atom parsing, keyword normalization, unchanged feeds, cursor updates, response-size limits, timeout/backoff, redirect rejection, private-address rejection, and safe errors. Database tests cover atomic claims and stale-worker recovery. E2E tests prove manual paste import behaves unchanged, a fictional allowlisted feed creates a normal batch, repeated runs create no duplicate batch items, and collected entries cannot bypass review or source trust gates. Visual tests cover 360x800 mobile, a modern phone viewport, desktop, empty/loading/success/failure states, the software-keyboard-safe action area, reduced motion, and text overlap.
+
+- [ ] **Step 6: Update operations and run the full verification matrix**
+
+Document allowlist ownership, source permission checks, robots/terms review, emergency disable, backoff recovery, and removal of a source. Run the Task 12 verification matrix plus the focused source-subscription database, Rust, and browser tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add database gitjobs-server config tests/e2e/dashboard/moderator/talent-import-review.spec.ts docs/operations/talent-import-review.md
+git commit -s -m "feat: add optional public talent source subscriptions"
+```
+
 ## Completion Gate
 
-Before calling the feature complete, verify every design acceptance criterion maps to at least one passing test, inspect public HTTP bodies for protected values, confirm formal config disables prototypes, exercise global pause and withdrawal manually, and obtain an independent code review of migration safety, cryptography usage, authorization, auto-publish policy, and audit completeness.
+Before calling the feature complete, verify every design acceptance criterion maps to at least one passing test, inspect public HTTP bodies for protected values, confirm formal config disables prototypes, exercise global pause and withdrawal manually, and obtain an independent code review of migration safety, cryptography usage, authorization, auto-publish policy, and audit completeness. If public-source subscriptions are enabled, also verify the host allowlist, network-address restrictions, incremental cursor behavior, source isolation, backoff, and the invariant that collected content enters the same import and review pipeline as manual content.

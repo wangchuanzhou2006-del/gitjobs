@@ -1,6 +1,11 @@
 <nav class="mt-5 flex gap-2 overflow-x-auto pb-1" aria-label="人才信息管理流程">
+  <a href="/dashboard/moderator/talent/radar"
+     class="min-h-11 whitespace-nowrap border px-3 py-2 text-sm font-medium {% if moderator_menu.talent_radar %}border-primary-600 bg-primary-50 text-primary-800{% else %}border-stone-300 text-stone-700{% endif %}">信息来源</a>
   <a href="/dashboard/moderator/talent/import"
      class="min-h-11 whitespace-nowrap border px-3 py-2 text-sm font-medium {% if moderator_menu.talent_import %}border-primary-600 bg-primary-50 text-primary-800{% else %}border-stone-300 text-stone-700{% endif %}">整理信息</a>
   <a href="/dashboard/moderator/talent/review"
      class="min-h-11 whitespace-nowrap border px-3 py-2 text-sm font-medium {% if moderator_menu.talent_review %}border-primary-600 bg-primary-50 text-primary-800{% else %}border-stone-300 text-stone-700{% endif %}">待查看</a>
+  <a href="/opportunities"
+     class="min-h-11 whitespace-nowrap border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700">查看客户端</a>
 </nav>
+{% include "dashboard/moderator/talent/components/usage_guide.html" -%}

@@ -19,7 +19,10 @@ begin
         raise exception 'invalid encrypted talent import payload' using errcode = '22023';
     end if;
 
+    v_batch_id := coalesce(nullif(p_import->>'batch_id', '')::uuid, gen_random_uuid());
+
     insert into talent_import_batches (
+        batch_id,
         source_id,
         imported_by,
         raw_text_ciphertext,
@@ -31,6 +34,7 @@ begin
         raw_delete_after
     )
     values (
+        v_batch_id,
         (p_import->>'source_id')::uuid,
         nullif(p_import->>'imported_by', '')::uuid,
         lower(p_import->>'raw_text_ciphertext'),
@@ -44,6 +48,7 @@ begin
     returning batch_id into v_batch_id;
 
     insert into talent_import_items (
+        item_id,
         batch_id,
         position,
         raw_fragment_ciphertext,
@@ -51,6 +56,7 @@ begin
         kind
     )
     select
+        coalesce(nullif(item->>'item_id', '')::uuid, gen_random_uuid()),
         v_batch_id,
         (item->>'position')::integer,
         lower(item->>'raw_fragment_ciphertext'),

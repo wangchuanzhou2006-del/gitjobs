@@ -26,6 +26,8 @@ server:
   talent:
     enabled: false
     prototype_data: true
+    source_updates_enabled: false
+    allowed_public_hosts: []
     # TASK 12 EXAMPLE ONLY: every placeholder below is deliberately invalid and
     # nonworking. Production must set prototype_data=false and inject independently
     # generated values through the environment or a secret manager:

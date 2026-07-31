@@ -1,5 +1,5 @@
 begin;
-select plan(9);
+select plan(12);
 
 \set sourceId '00000000-0000-0000-0000-000000000811'
 \set batchId '00000000-0000-0000-0000-000000000821'
@@ -133,6 +133,40 @@ select is(
     (select count(*) from talent_records where record_id = :'recordId'),
     1::bigint,
     'cleanup preserves published records'
+);
+
+select is(
+    (select count(*) from talent_review_events where resource_scope = 'cleanup'),
+    2::bigint,
+    'cleanup writes one scoped audit event per cleaned batch'
+);
+
+select results_eq(
+    $$
+    select
+        actor_type,
+        action,
+        reason,
+        (before_snapshot->>'raw_text_present')::boolean,
+        (before_snapshot->>'item_raw_payload_count')::integer,
+        (after_snapshot->>'raw_text_present')::boolean,
+        (after_snapshot->>'item_raw_payload_count')::integer
+    from talent_review_events
+    where resource_scope = 'cleanup'
+      and batch_id = '00000000-0000-0000-0000-000000000821'::uuid
+    $$,
+    $$ values ('system'::text, 'raw_data_cleaned'::text, 'retention_expired'::text,
+               true, 1::integer, false, 0::integer) $$,
+    'cleanup audit records privacy-safe before and after retention state'
+);
+
+select cleanup_talent_raw_data(current_timestamp) as retry_cleanup_outcome
+\gset
+
+select is(
+    (select count(*) from talent_review_events where resource_scope = 'cleanup'),
+    2::bigint,
+    'retrying cleanup creates no duplicate audit event'
 );
 
 select * from finish();

@@ -1,0 +1,73 @@
+{% extends "dashboard/dashboard_base_moderator.html" -%}
+{% import "macros/ui.html" as ui -%}
+
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}信息雷达 | GitJobs{% endblock page_title %}
+{% block page_description %}关注获准的公开人才信息来源。{% endblock page_description %}
+
+{% block dashboard_main -%}
+<div id="dashboard-content" class="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6 sm:py-8 lg:px-10">
+  <header class="border-b border-stone-200 pb-5">
+    <p class="mb-2 text-sm font-semibold text-primary-700">人才信息</p>
+    <h1 class="m-0 text-2xl font-semibold text-stone-950 sm:text-3xl">信息雷达</h1>
+  </header>
+  {% include "dashboard/moderator/talent/components/workflow_nav.html" -%}
+
+  <section class="mt-5 border-l-4 {% if enabled %}border-emerald-500 bg-emerald-50{% else %}border-amber-500 bg-amber-50{% endif %} px-4 py-4" aria-label="关注状态">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p class="m-0 text-sm font-semibold text-stone-900">{% if enabled %}正在关注公开信息{% else %}公开信息更新已暂停{% endif %}</p>
+        <p class="mb-0 mt-1 text-sm text-stone-700">关注 {{ watched_count }} 个来源{% if attention_count > 0 %}，{{ attention_count }} 个需要留意{% endif %}</p>
+      </div>
+      <span class="text-sm font-semibold text-stone-800">{% if enabled %}运行中{% else %}已暂停{% endif %}</span>
+    </div>
+  </section>
+
+  {% if !errors.is_empty() %}
+    <div class="mt-5 border-l-4 border-red-600 bg-red-50 px-4 py-3 text-sm text-red-900" role="alert">
+      {% for error in errors %}<p class="m-0">{{ error }}</p>{% endfor %}
+    </div>
+  {% endif %}
+
+  <section class="mt-8" aria-labelledby="add-radar-source-title">
+    <h2 id="add-radar-source-title" class="m-0 text-lg font-semibold text-stone-950">添加关注</h2>
+    <form method="post" action="/dashboard/moderator/talent/radar" class="mt-4 space-y-5">
+      <label class="block"><span class="form-label">来源名称</span><input class="input-primary mt-2 min-h-11" name="source_name" required maxlength="120" placeholder="例如：本地餐饮协会"></label>
+      <label class="block"><span class="form-label">从哪里找</span><input class="input-primary mt-2 min-h-11" name="public_url" required type="url" inputmode="url" placeholder="https://"></label>
+      <label class="block"><span class="form-label">找什么</span><input class="input-primary mt-2 min-h-11" name="keywords" required maxlength="500" placeholder="厨师、切配、服务员"></label>
+      <label class="block"><span class="form-label">多久找一次</span>
+        <select class="input-primary mt-2 min-h-11" name="frequency">
+          <option value="daily">每天一次</option><option value="twice_daily">每天两次</option><option value="weekly">每周一次</option>
+        </select>
+      </label>
+      <label class="flex min-h-11 items-center gap-3"><input type="checkbox" name="enabled" value="true" checked><span class="font-medium text-stone-800">开始关注</span></label>
+      <div class="sticky bottom-0 z-10 -mx-4 border-t border-stone-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:p-0">
+        <button class="btn-primary min-h-11 w-full justify-center sm:w-auto" type="submit">保存关注</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="mt-10 border-t border-stone-200 pt-7" aria-labelledby="radar-sources-title">
+    <h2 id="radar-sources-title" class="m-0 text-lg font-semibold text-stone-950">正在关注</h2>
+    {% if sources.is_empty() %}
+      <div class="mt-4 border border-dashed border-stone-300 px-4 py-9 text-center text-sm text-stone-600">暂时没有公开来源</div>
+    {% else %}
+      <ol class="mt-4 divide-y divide-stone-200 border-y border-stone-200">
+      {% for source in sources %}
+        <li class="py-4">
+          <div class="flex items-start justify-between gap-3"><strong class="text-stone-950">{{ source.name }}</strong><span class="shrink-0 text-sm {% if source.needs_attention %}text-red-700{% else %}text-stone-600{% endif %}">{{ source.status }}</span></div>
+          <p class="mb-0 mt-2 break-words text-sm text-stone-700">{{ source.topics }}</p>
+          <p class="mb-0 mt-2 text-xs text-stone-500">{{ source.frequency }} · {{ source.updated }}</p>
+          <a class="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-primary-700" href="/dashboard/moderator/talent/radar/{{ source.subscription_id }}/edit">编辑</a>
+          <form class="mt-3" method="post" action="/dashboard/moderator/talent/radar/{{ source.subscription_id }}/toggle" hx-put="/dashboard/moderator/talent/radar/{{ source.subscription_id }}/toggle" hx-target="body">
+            <input type="hidden" name="enabled" value="{% if source.enabled %}false{% else %}true{% endif %}">
+            <button class="btn-primary-outline min-h-11 w-full sm:w-auto" type="submit">{% if source.enabled %}暂停关注{% else %}恢复关注{% endif %}</button>
+          </form>
+        </li>
+      {% endfor %}
+      </ol>
+    {% endif %}
+  </section>
+</div>
+{% if !messages.is_empty() %}{{ ui::alerts(messages) }}{% endif %}
+{% endblock dashboard_main -%}

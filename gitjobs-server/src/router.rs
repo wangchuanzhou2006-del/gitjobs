@@ -336,6 +336,20 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
             get(dashboard::moderator::talent::import::page)
                 .post(dashboard::moderator::talent::import::create),
         )
+        .route(
+            "/talent/radar",
+            get(dashboard::moderator::talent::radar::page).post(dashboard::moderator::talent::radar::create),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/toggle",
+            post(dashboard::moderator::talent::radar::toggle)
+                .put(dashboard::moderator::talent::radar::toggle),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/edit",
+            get(dashboard::moderator::talent::radar::edit_page)
+                .post(dashboard::moderator::talent::radar::create),
+        )
         .route("/talent/review", get(dashboard::moderator::talent::review::queue))
         .route(
             "/talent/review/{item_id}",
@@ -348,8 +362,7 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
         )
         .route(
             "/talent/review/{item_id}/save",
-            post(dashboard::moderator::talent::review::save)
-                .put(dashboard::moderator::talent::review::save),
+            post(dashboard::moderator::talent::review::save).put(dashboard::moderator::talent::review::save),
         )
         .route(
             "/talent/review/{item_id}/merge",

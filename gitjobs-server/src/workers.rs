@@ -16,6 +16,7 @@ use crate::{
 const TALENT_MAX_CONCURRENCY: usize = 4;
 const TALENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const TALENT_CLEANUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const TALENT_SOURCE_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const PRIVACY_SAFE_PANIC_MESSAGE: &str = "background task panicked";
 
 /// Replaces the default payload-printing hook before any background work starts.
@@ -40,6 +41,8 @@ pub(crate) fn run(
     db: DynDB,
     talent: Arc<TalentServices>,
     talent_enabled: bool,
+    source_updates_enabled: bool,
+    allowed_public_hosts: Vec<String>,
     task_tracker: &TaskTracker,
     cancellation_token: CancellationToken,
 ) {
@@ -49,15 +52,45 @@ pub(crate) fn run(
     task_tracker.spawn(async move {
         archiver(archiver_db, archiver_cancellation).await;
     });
+    let cleanup_db = db.clone();
+    let cleanup_cancellation = cancellation_token.clone();
+    task_tracker.spawn(async move {
+        talent_cleanup_worker(cleanup_db, cleanup_cancellation).await;
+    });
     if talent_enabled {
         let processor = talent.processor.clone();
         let processor_cancellation = cancellation_token.clone();
         task_tracker.spawn(async move {
             talent_processor_worker(processor, processor_cancellation).await;
         });
-        task_tracker.spawn(async move {
-            talent_cleanup_worker(db, cancellation_token).await;
-        });
+        if source_updates_enabled {
+            match crate::talent::TalentSourceCollector::new(db, talent.import.clone(), allowed_public_hosts) {
+                Ok(collector) => {
+                    let source_cancellation = cancellation_token;
+                    task_tracker.spawn(async move {
+                        talent_source_worker(collector, source_cancellation).await;
+                    });
+                }
+                Err(_) => error!("talent source collector configuration failed"),
+            }
+        }
+    }
+}
+
+pub(crate) async fn talent_source_worker(
+    collector: crate::talent::TalentSourceCollector,
+    cancellation_token: CancellationToken,
+) {
+    loop {
+        match collector.collect_one().await {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => error!(code = error.code(), "talent source update failed"),
+        }
+        tokio::select! {
+            () = sleep(TALENT_SOURCE_POLL_INTERVAL) => {}
+            () = cancellation_token.cancelled() => break,
+        }
     }
 }
 
@@ -171,9 +204,13 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use tokio_util::sync::CancellationToken;
+    use tokio::sync::Notify;
+    use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
-    use crate::talent::{ProcessError, ProcessOutcome};
+    use crate::{
+        db::{DynDB, mock::MockDB},
+        talent::{ProcessError, ProcessOutcome},
+    };
 
     use super::{TalentItemProcessor, talent_processor_worker_with};
 
@@ -230,6 +267,40 @@ mod tests {
         assert!(processor.calls.load(Ordering::SeqCst) >= 5);
         assert!(processor.maximum.load(Ordering::SeqCst) <= 4);
         assert_eq!(processor.active.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disabling_talent_still_starts_cleanup_without_the_processor() {
+        let cleaned = Arc::new(Notify::new());
+        let cleanup_signal = cleaned.clone();
+        let mut db = MockDB::new();
+        db.expect_cleanup_talent_raw_data().times(1).returning(move |_| {
+            cleanup_signal.notify_one();
+            Ok(())
+        });
+        db.expect_claim_talent_import_item().never();
+        let db: DynDB = Arc::new(db);
+        let talent = crate::handlers::tests::test_talent_services(db.clone());
+        let tracker = TaskTracker::new();
+        let cancellation = CancellationToken::new();
+
+        super::run(
+            db,
+            talent,
+            false,
+            false,
+            Vec::new(),
+            &tracker,
+            cancellation.clone(),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), cleaned.notified())
+            .await
+            .expect("cleanup should run even while talent import is disabled");
+
+        cancellation.cancel();
+        tracker.close();
+        tracker.wait().await;
     }
 
     #[test]

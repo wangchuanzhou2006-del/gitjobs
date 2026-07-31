@@ -1258,6 +1258,32 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
   font-size: 0.78rem;
 }
 
+.talent-usage-guide,
+.opportunity-usage-guide {
+  max-width: 78rem;
+  margin: 0 auto 0.75rem;
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.9rem;
+  color: var(--opp-muted);
+  font-size: 0.82rem;
+}
+
+.talent-usage-guide summary,
+.opportunity-usage-guide summary {
+  min-height: 2.75rem;
+  cursor: pointer;
+  align-content: center;
+  color: var(--opp-text);
+  font-weight: 700;
+}
+
+.talent-usage-guide ol,
+.opportunity-usage-guide ol {
+  margin: 0.35rem 0 0.35rem 1.2rem;
+  padding: 0;
+  line-height: 1.75;
+}
+
 .talent-command-bar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

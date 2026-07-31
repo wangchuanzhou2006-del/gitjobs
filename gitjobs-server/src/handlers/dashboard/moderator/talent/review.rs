@@ -1163,6 +1163,7 @@ mod tests {
     #[tokio::test]
     async fn moderator_detail_decrypts_raw_fragment_and_askama_escapes_model_html() {
         let item_id = Uuid::new_v4();
+        let batch_id = Uuid::new_v4();
         let raw = "<script>FICTIONAL_PRIVATE_RAW_26</script>";
         let crypto = crate::talent::TalentCrypto::new(
             "1".to_owned(),
@@ -1170,13 +1171,18 @@ mod tests {
                 "1".to_owned(),
                 "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
             )]),
-            "test-contact-pepper".to_owned(),
+            "synthetic-contact-pepper-material-v1".to_owned(),
         )
         .unwrap();
         let protected = crypto
-            .encrypt_with_version(raw.as_bytes(), &crate::talent::fragment_aad(0), "1")
+            .encrypt_with_version(
+                raw.as_bytes(),
+                &crate::talent::fragment_aad(batch_id, item_id, 0),
+                "1",
+            )
             .unwrap();
         let mut item = review_item_fixture(item_id);
+        item.batch_id = batch_id;
         let source_token = Utc.with_ymd_and_hms(2026, 7, 27, 9, 1, 0).unwrap();
         item.source_updated_at = source_token;
         item.raw_fragment_ciphertext = Some(protected.bytes);

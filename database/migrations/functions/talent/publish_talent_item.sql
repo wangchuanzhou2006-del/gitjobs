@@ -113,6 +113,11 @@ begin
                 v_item.extraction->'restDaysPerMonth',
                 v_item.extraction->'rest_days_per_month'
             ),
+            'lodging', v_item.extraction->'lodging',
+            'housing_allowance', coalesce(
+                v_item.extraction->'housingAllowance',
+                v_item.extraction->'housing_allowance'
+            ),
             'availability', v_item.extraction->>'availability',
             'urgency', v_item.extraction->>'urgency',
             'published_at', coalesce(
@@ -319,6 +324,12 @@ begin
         );
 
     if p_automatic then
+        -- Different exact keys can still be structured duplicates. Serialize the
+        -- authoritative final scan so a concurrent winner is visible to the loser.
+        perform pg_advisory_xact_lock(
+            hashtextextended('talent:auto-publish:structured-v1', 0)
+        );
+
         -- Serialize all automatic publications sharing an exact dedupe key. The
         -- lock names are one-way database hashes and are held for this transaction.
         perform pg_advisory_xact_lock(hashtextextended(dedupe_key, 0))
@@ -349,6 +360,111 @@ begin
               and record.status <> 'withdrawn'
               and nullif(v_item.normalized_fingerprint, '') is not null
               and origin.normalized_fingerprint = v_item.normalized_fingerprint
+            union all
+            select 1
+            from talent_records record
+            cross join lateral (
+                select (
+                    case
+                        when exists (
+                            select 1
+                            from jsonb_array_elements(
+                                case
+                                    when jsonb_typeof(v_publication->'roles') = 'array'
+                                        then v_publication->'roles'
+                                    else '[]'::jsonb
+                                end
+                            ) subject_role
+                            join unnest(coalesce(record.roles, '{}'::text[])) candidate_role
+                              on lower(btrim(subject_role #>> '{}'))
+                               = lower(btrim(candidate_role))
+                            where jsonb_typeof(subject_role) = 'string'
+                              and btrim(subject_role #>> '{}') <> ''
+                        ) then 0.35
+                        else 0.0
+                    end
+                    + case
+                        when (
+                            nullif(btrim(v_publication->>'city'), '') is not null
+                            and lower(btrim(v_publication->>'city'))
+                                = lower(btrim(record.city))
+                        ) or (
+                            nullif(btrim(v_publication->>'district'), '') is not null
+                            and lower(btrim(v_publication->>'district'))
+                                = lower(btrim(record.district))
+                        ) then 0.25
+                        else 0.0
+                    end
+                    + case
+                        when nullif(v_publication->>'salary_min', '') is not null
+                         and nullif(v_publication->>'salary_max', '') is not null
+                         and record.salary_min is not null
+                         and record.salary_max is not null
+                         and (v_publication->>'salary_min')::integer <= record.salary_max
+                         and record.salary_min <= (v_publication->>'salary_max')::integer
+                            then 0.20
+                        else 0.0
+                    end
+                    + case when record.source_id = v_source.source_id then 0.10 else 0.0 end
+                    + 0.10 * coalesce((
+                        with subject_tokens as (
+                            select distinct lower(btrim(token)) as token
+                            from regexp_split_to_table(
+                                concat_ws(
+                                    ' ',
+                                    v_publication->>'title',
+                                    (
+                                        select string_agg(role #>> '{}', ' ')
+                                        from jsonb_array_elements(
+                                            case
+                                                when jsonb_typeof(v_publication->'roles') = 'array'
+                                                    then v_publication->'roles'
+                                                else '[]'::jsonb
+                                            end
+                                        ) role
+                                        where jsonb_typeof(role) = 'string'
+                                    ),
+                                    v_publication->>'city',
+                                    v_publication->>'district'
+                                ),
+                                '\s+'
+                            ) token
+                            where btrim(token) <> ''
+                        ),
+                        candidate_tokens as (
+                            select distinct lower(btrim(token)) as token
+                            from regexp_split_to_table(
+                                concat_ws(
+                                    ' ',
+                                    record.title,
+                                    array_to_string(record.roles, ' '),
+                                    record.city,
+                                    record.district
+                                ),
+                                '\s+'
+                            ) token
+                            where btrim(token) <> ''
+                        ),
+                        token_counts as (
+                            select
+                                (select count(*) from subject_tokens) as subject_count,
+                                (select count(*) from candidate_tokens) as candidate_count,
+                                (
+                                    select count(*)
+                                    from subject_tokens
+                                    join candidate_tokens using (token)
+                                ) as intersection_count
+                        )
+                        select
+                            (2.0 * intersection_count)
+                            / nullif(subject_count + candidate_count, 0)
+                        from token_counts
+                    ), 0.0)
+                )::numeric as score
+            ) structured
+            where record.status <> 'withdrawn'
+              and record.kind = v_item.kind
+              and structured.score >= 0.85
         )
         into v_fresh_duplicate;
     else
@@ -443,8 +559,8 @@ begin
         nullif(v_publication->>'experience_years', '')::integer,
         nullif(v_publication->>'hours_per_day', '')::integer,
         nullif(v_publication->>'rest_days_per_month', '')::integer,
-        nullif(v_publication->>'lodging', '')::boolean,
-        nullif(v_publication->>'housing_allowance', '')::boolean,
+        nullif(v_publication->>'lodging', ''),
+        nullif(v_publication->>'housing_allowance', '')::bigint,
         nullif(v_publication->>'availability', ''),
         nullif(v_publication->>'urgency', ''),
         v_source.source_id,

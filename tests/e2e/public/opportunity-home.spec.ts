@@ -25,6 +25,11 @@ test.describe("opportunity constellation foundation", () => {
     await expect(
       page.getByTestId("desktop-exploration-rail").getByText("机会", { exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "从区域密度进入具体项目" })).toBeVisible();
+    await expect(page.getByText("怎么使用", { exact: true })).toBeVisible();
+    await expect(
+      page.getByTestId("desktop-exploration-rail").getByRole("link", { name: "人才" }),
+    ).toHaveAttribute("href", "/talent");
     await page.getByRole("button", { name: "切换深色沉浸模式" }).click();
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-theme", "dark");
     await page.reload();

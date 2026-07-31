@@ -15,7 +15,7 @@ use crate::{
         AiError, AutoPublishInput, AutoPublishPolicy, ContactCandidate, DuplicateProbe, DuplicateService,
         EncryptedValue, ExtractionRequest, RiskEngine, RiskInput, RuleEngine, TalentAiProvider, TalentCrypto,
         TalentExtraction, ValidatedExtraction, ValidationIssue, contact_hash, extraction_fingerprint,
-        validate_extraction,
+        validate_model_extraction,
     },
 };
 
@@ -79,7 +79,7 @@ impl TalentProcessor {
         let fragment = match self.decrypt_fragment(&claimed) {
             Some(fragment) => fragment,
             None => {
-                self.fail_safely(claimed.item_id, "decrypt_failed").await?;
+                self.fail_safely(&claimed, "decrypt_failed").await?;
                 return Ok(ProcessOutcome::Failed);
             }
         };
@@ -91,12 +91,12 @@ impl TalentProcessor {
         {
             Some(item) => item,
             None => {
-                self.fail_safely(claimed.item_id, "item_metadata_missing").await?;
+                self.fail_safely(&claimed, "item_metadata_missing").await?;
                 return Ok(ProcessOutcome::Failed);
             }
         };
         let hints = self.rules.analyze(&fragment);
-        let extraction = match self.extract_with_one_timeout_retry(fragment).await {
+        let extraction = match self.extract_with_one_timeout_retry(fragment.clone()).await {
             Ok(extraction) => extraction,
             Err(code) => {
                 let validated = unavailable_extraction(code);
@@ -105,7 +105,7 @@ impl TalentProcessor {
                 return Ok(ProcessOutcome::NeedsReview);
             }
         };
-        let validated = match validate_extraction(extraction.clone()) {
+        let validated = match validate_model_extraction(extraction.clone(), &fragment) {
             Ok(validated) => validated,
             Err(issues) => invalid_extraction(extraction, issues),
         };
@@ -116,7 +116,7 @@ impl TalentProcessor {
         {
             Ok(eligible) => eligible,
             Err(ProcessError::ProtectedData | ProcessError::StructuredData) => {
-                self.fail_safely(claimed.item_id, "processing_failed").await?;
+                self.fail_safely(&claimed, "processing_failed").await?;
                 return Ok(ProcessOutcome::Failed);
             }
             Err(error) => return Err(error),
@@ -144,7 +144,6 @@ impl TalentProcessor {
     }
 
     fn decrypt_fragment(&self, claimed: &ClaimedTalentItem) -> Option<String> {
-        let position = usize::try_from(claimed.position).ok()?;
         let plaintext = self
             .crypto
             .decrypt(
@@ -152,7 +151,7 @@ impl TalentProcessor {
                     key_version: claimed.encryption_key_version.to_string(),
                     bytes: claimed.raw_fragment_ciphertext.clone(),
                 },
-                &fragment_aad(position),
+                &fragment_aad(claimed.batch_id, claimed.item_id, claimed.position),
             )
             .ok()?;
         String::from_utf8(plaintext).ok()
@@ -235,6 +234,8 @@ impl TalentProcessor {
         self.db
             .complete_talent_import_item(CompletedTalentItem {
                 item_id: claimed.item_id,
+                claim_token: claimed.claim_token,
+                claim_version: claimed.claim_version,
                 extraction,
                 extraction_confidence: validated.safe.confidence,
                 contact_candidates_ciphertext: protected.ciphertext,
@@ -253,10 +254,12 @@ impl TalentProcessor {
         Ok(strictly_valid && decision.eligible)
     }
 
-    async fn fail_safely(&self, item_id: uuid::Uuid, code: &str) -> Result<(), ProcessError> {
+    async fn fail_safely(&self, claimed: &ClaimedTalentItem, code: &str) -> Result<(), ProcessError> {
         self.db
             .fail_talent_import_item(FailedTalentItem {
-                item_id,
+                item_id: claimed.item_id,
+                claim_token: claimed.claim_token,
+                claim_version: claimed.claim_version,
                 validation_errors: json!([{"code": code}]),
             })
             .await
@@ -320,6 +323,7 @@ fn ai_error_code(error: AiError) -> &'static str {
     match error {
         AiError::Timeout => "ai_timeout",
         AiError::Transport | AiError::HttpStatus(_) => "ai_unavailable",
+        AiError::ResponseTooLarge => "ai_response_too_large",
         AiError::InvalidResponse | AiError::MissingChoice | AiError::InvalidJson | AiError::InvalidSchema => {
             "ai_invalid_response"
         }
@@ -360,8 +364,8 @@ mod tests {
             },
         },
         talent::{
-            AiError, ContactCandidate, ContactType, ExtractionRequest, ImportItemStatus, SourceTrust,
-            SourceType, TalentAiProvider, TalentCrypto, TalentExtraction, TalentKind,
+            AiError, ContactCandidate, ContactType, ExtractionRequest, ImportItemStatus, RiskReason,
+            SourceTrust, SourceType, TalentAiProvider, TalentCrypto, TalentExtraction, TalentKind,
         },
     };
 
@@ -389,7 +393,7 @@ mod tests {
                     "1".to_owned(),
                     "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
                 )]),
-                "test-contact-pepper".to_owned(),
+                "synthetic-contact-pepper-material-v1".to_owned(),
             )
             .unwrap(),
         )
@@ -478,8 +482,13 @@ mod tests {
         expect_publish: bool,
     ) -> (TalentProcessor, Arc<SequenceAi>) {
         let crypto = crypto();
-        let encrypted = crypto.encrypt(b"neutral synthetic input", &fragment_aad(0)).unwrap();
+        let batch_id = Uuid::new_v4();
         let item_id = Uuid::new_v4();
+        let encrypted = crypto
+            .encrypt(b"neutral synthetic input", &fragment_aad(batch_id, item_id, 0))
+            .unwrap();
+        let claim_token = Uuid::from_u128(0xfeed);
+        let claim_version = 7;
         let mut db = MockDB::new();
         let mut sequence = Sequence::new();
         db.expect_claim_talent_import_item()
@@ -488,12 +497,15 @@ mod tests {
             .return_once(move || {
                 Ok(Some(ClaimedTalentItem {
                     item_id,
-                    batch_id: Uuid::new_v4(),
+                    batch_id,
                     position: 0,
                     raw_fragment_ciphertext: encrypted.bytes,
                     encryption_key_version: 1,
                     kind: TalentKind::Hiring,
                     status: ImportItemStatus::Extracting,
+                    claim_token,
+                    claim_version,
+                    claim_expires_at: Utc::now() + chrono::Duration::minutes(2),
                 }))
             });
         db.expect_get_talent_review_item()
@@ -505,13 +517,18 @@ mod tests {
             .in_sequence(&mut sequence)
             .withf(move |probe, limit| {
                 probe.item_id == item_id
-                    && probe.kind == TalentKind::Hiring
-                    && probe.roles == ["Cook"]
                     && probe.source_id != Uuid::nil()
-                    && !probe.contact_hashes.is_empty()
-                    && probe.normalized_fingerprint.is_some()
-                    && probe.normalized_text == "cook cook test city"
                     && *limit == 20
+                    && ((probe.kind == TalentKind::Hiring
+                        && probe.roles == ["Cook"]
+                        && !probe.contact_hashes.is_empty()
+                        && probe.normalized_fingerprint.is_some()
+                        && probe.normalized_text == "cook cook test city")
+                        || (probe.kind == TalentKind::Uncertain
+                            && probe.roles.is_empty()
+                            && probe.contact_hashes.is_empty()
+                            && probe.normalized_fingerprint.is_none()
+                            && probe.normalized_text.is_empty()))
             })
             .return_once(move |_, _| Ok(duplicates));
         db.expect_get_talent_runtime_settings()
@@ -527,6 +544,14 @@ mod tests {
         db.expect_complete_talent_import_item()
             .times(1)
             .in_sequence(&mut sequence)
+            .withf(move |completion| {
+                let safe_json = serde_json::to_string(&completion.extraction).unwrap_or_default();
+                completion.claim_token == claim_token
+                    && completion.claim_version == claim_version
+                    && !safe_json.contains("13800138000")
+                    && !safe_json.contains("candidate_2026")
+                    && !safe_json.contains("PRIVATE-RAW-MARKER")
+            })
             .returning(|_| Ok(()));
         if expect_publish {
             db.expect_publish_talent_item()
@@ -620,8 +645,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adversarial_model_strings_are_not_persisted_or_auto_published() {
+        let mut unsafe_extraction = extraction();
+        unsafe_extraction.title =
+            Some("PRIVATE-RAW-MARKER complete phone 13800138000 wechat: candidate_2026".to_owned());
+        let (processor, _) = processor_case(SourceTrust::Trusted, vec![Ok(unsafe_extraction)], vec![], false);
+
+        assert_eq!(
+            processor.process_one().await.unwrap(),
+            ProcessOutcome::NeedsReview
+        );
+    }
+
+    #[tokio::test]
+    async fn model_only_hard_risk_is_server_canonicalized_and_never_auto_published() {
+        let mut risky = extraction();
+        risky.risk_candidates.push(RiskReason {
+            code: "fee_solicitation".to_owned(),
+            explanation: "provider says this is harmless".to_owned(),
+            evidence: Some("provider supplied evidence".to_owned()),
+            hard_block: false,
+        });
+        let (processor, _) = processor_case(SourceTrust::Trusted, vec![Ok(risky)], vec![], false);
+
+        assert_eq!(
+            processor.process_one().await.unwrap(),
+            ProcessOutcome::NeedsReview
+        );
+    }
+
+    #[tokio::test]
     async fn decrypt_failure_is_failed_with_only_a_safe_error_code() {
         let item_id = Uuid::new_v4();
+        let claim_token = Uuid::from_u128(0xbeef);
+        let claim_version = 11;
         let mut db = MockDB::new();
         db.expect_claim_talent_import_item().times(1).return_once(move || {
             Ok(Some(ClaimedTalentItem {
@@ -632,12 +689,17 @@ mod tests {
                 encryption_key_version: 1,
                 kind: TalentKind::Uncertain,
                 status: ImportItemStatus::Extracting,
+                claim_token,
+                claim_version,
+                claim_expires_at: Utc::now() + chrono::Duration::minutes(2),
             }))
         });
         db.expect_fail_talent_import_item()
             .times(1)
-            .withf(|failure| {
+            .withf(move |failure| {
                 failure.validation_errors == serde_json::json!([{"code": "decrypt_failed"}])
+                    && failure.claim_token == claim_token
+                    && failure.claim_version == claim_version
                     && !format!("{failure:?}").contains("[1, 2, 3]")
             })
             .returning(|_| Ok(()));

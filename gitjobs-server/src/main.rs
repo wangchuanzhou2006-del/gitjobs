@@ -110,14 +110,16 @@ async fn main() -> Result<()> {
 
     // Build the talent services once so HTTP handlers and workers share the same state.
     let http_client = Client::new();
-    let talent_services = TalentServices::from_config(db.clone(), &cfg.talent, http_client.clone())
+    let talent_services = TalentServices::from_config(db.clone(), &cfg.server.talent, http_client.clone())
         .context("error setting up talent services")?;
 
     // Run additional background workers.
     workers::run(
         db.clone(),
         talent_services.clone(),
-        cfg.talent.enabled,
+        cfg.server.talent.enabled,
+        cfg.server.talent.source_updates_enabled,
+        cfg.server.talent.allowed_public_hosts.clone(),
         &task_tracker,
         cancellation_token.clone(),
     );

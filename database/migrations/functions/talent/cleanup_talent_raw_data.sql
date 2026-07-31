@@ -2,45 +2,86 @@
 create or replace function cleanup_talent_raw_data(p_now timestamptz)
 returns jsonb as $$
 declare
-    v_batches integer;
-    v_items integer;
+    v_batches integer := 0;
+    v_items integer := 0;
+    v_item_count integer;
+    v_due record;
 begin
-    with due as (
-        select batch_id
-        from talent_import_batches
-        where raw_deleted_at is null
+    for v_due in
+        select
+            batch.batch_id,
+            batch.raw_text_ciphertext is not null as raw_text_present,
+            (
+                select count(*)::integer
+                from talent_import_items item
+                where item.batch_id = batch.batch_id
+                  and (
+                      item.raw_fragment_ciphertext is not null
+                      or item.contact_candidates_ciphertext is not null
+                  )
+            ) as item_raw_payload_count
+        from talent_import_batches batch
+        where batch.raw_deleted_at is null
           and (
-              raw_delete_after <= p_now
-              or created_at <= p_now - interval '90 days'
+              batch.raw_delete_after <= p_now
+              or batch.created_at <= p_now - interval '90 days'
           )
-        for update
-    ),
-    cleaned_items as (
+        for update of batch
+    loop
         update talent_import_items i
         set
             raw_fragment_ciphertext = null,
             contact_candidates_ciphertext = null,
             updated_at = current_timestamp
-        from due
-        where i.batch_id = due.batch_id
+        where i.batch_id = v_due.batch_id
           and (
               i.raw_fragment_ciphertext is not null
               or i.contact_candidates_ciphertext is not null
-          )
-        returning i.item_id
-    )
-    select count(*) into v_items from cleaned_items;
+          );
+        get diagnostics v_item_count = row_count;
+        v_items := v_items + v_item_count;
 
-    update talent_import_batches
-    set
-        raw_text_ciphertext = null,
-        raw_deleted_at = p_now
-    where raw_deleted_at is null
-      and (
-          raw_delete_after <= p_now
-          or created_at <= p_now - interval '90 days'
-      );
-    get diagnostics v_batches = row_count;
+        update talent_import_batches
+        set
+            raw_text_ciphertext = null,
+            raw_deleted_at = p_now
+        where batch_id = v_due.batch_id
+          and raw_deleted_at is null;
+
+        if found then
+            v_batches := v_batches + 1;
+            insert into talent_review_events (
+                resource_scope,
+                batch_id,
+                actor_type,
+                action,
+                reason,
+                before_snapshot,
+                after_snapshot,
+                rule_version,
+                policy_version,
+                created_at
+            )
+            values (
+                'cleanup',
+                v_due.batch_id,
+                'system',
+                'raw_data_cleaned',
+                'retention_expired',
+                jsonb_build_object(
+                    'raw_text_present', v_due.raw_text_present,
+                    'item_raw_payload_count', v_due.item_raw_payload_count
+                ),
+                jsonb_build_object(
+                    'raw_text_present', false,
+                    'item_raw_payload_count', 0
+                ),
+                'talent-risk-v1',
+                'talent-retention-v1',
+                clock_timestamp()
+            );
+        end if;
+    end loop;
 
     return jsonb_build_object(
         'batches_cleaned', v_batches,

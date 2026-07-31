@@ -1,4 +1,4 @@
--- Claims one queued item without blocking another worker's claim.
+-- Claims one queued or expired item and issues a lease-scoped fencing credential.
 create or replace function claim_talent_import_item()
 returns jsonb as $$
 declare
@@ -11,7 +11,10 @@ begin
         where status = 'queued'
            or (
                status = 'extracting'
-               and updated_at < current_timestamp - v_extracting_lease
+               and (
+                   claim_expires_at is null
+                   or claim_expires_at <= current_timestamp
+               )
            )
         order by
             case when status = 'queued' then 0 else 1 end,
@@ -22,7 +25,12 @@ begin
         limit 1
     )
     update talent_import_items i
-    set status = 'extracting', updated_at = current_timestamp
+    set
+        status = 'extracting',
+        claim_token = gen_random_uuid(),
+        claim_version = claim_version + 1,
+        claim_expires_at = current_timestamp + v_extracting_lease,
+        updated_at = current_timestamp
     from next_item n
     where i.item_id = n.item_id
     returning row_to_json(i) into v_item;

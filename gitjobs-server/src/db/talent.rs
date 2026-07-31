@@ -15,7 +15,7 @@ use crate::{
     PgDB,
     talent::{
         ContactType, DuplicateCandidate, ImportItemStatus, RiskLevel, SourceTrust, SourceType,
-        TalentExtraction, TalentKind,
+        TalentExtraction, TalentKind, safe_extraction_contains_private_data,
     },
 };
 
@@ -23,6 +23,7 @@ const MAX_TALENT_IMPORT_ITEMS: usize = 500;
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct NewTalentImport {
+    pub batch_id: Uuid,
     pub source_type: SourceType,
     pub source_name: String,
     pub imported_by: Option<Uuid>,
@@ -39,6 +40,7 @@ impl fmt::Debug for NewTalentImport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NewTalentImport")
+            .field("batch_id", &self.batch_id)
             .field("source_type", &self.source_type)
             .field("source_name", &self.source_name)
             .field("imported_by", &self.imported_by)
@@ -55,6 +57,7 @@ impl fmt::Debug for NewTalentImport {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct NewTalentImportItem {
+    pub item_id: Uuid,
     pub position: u32,
     pub raw_fragment_ciphertext: Vec<u8>,
     pub encryption_key_version: u32,
@@ -65,6 +68,7 @@ impl fmt::Debug for NewTalentImportItem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NewTalentImportItem")
+            .field("item_id", &self.item_id)
             .field("position", &self.position)
             .field("raw_fragment_ciphertext", &"[REDACTED]")
             .field("encryption_key_version", &self.encryption_key_version)
@@ -100,6 +104,9 @@ pub(crate) struct ClaimedTalentItem {
     pub encryption_key_version: u32,
     pub kind: TalentKind,
     pub status: ImportItemStatus,
+    pub claim_token: Uuid,
+    pub claim_version: i64,
+    pub claim_expires_at: DateTime<Utc>,
 }
 
 impl fmt::Debug for ClaimedTalentItem {
@@ -113,6 +120,9 @@ impl fmt::Debug for ClaimedTalentItem {
             .field("encryption_key_version", &self.encryption_key_version)
             .field("kind", &self.kind)
             .field("status", &self.status)
+            .field("claim_token", &"[REDACTED]")
+            .field("claim_version", &self.claim_version)
+            .field("claim_expires_at", &self.claim_expires_at)
             .finish()
     }
 }
@@ -126,6 +136,9 @@ impl TryFrom<TalentExtraction> for SafeTalentExtraction {
     fn try_from(extraction: TalentExtraction) -> Result<Self> {
         if !extraction.contacts.is_empty() {
             bail!("safe talent extraction cannot contain contacts");
+        }
+        if safe_extraction_contains_private_data(&extraction) {
+            bail!("safe talent extraction cannot contain protected strings");
         }
         let mut value = serde_json::to_value(extraction)?;
         value
@@ -154,6 +167,8 @@ impl fmt::Debug for SafeTalentExtraction {
 #[derive(Clone, PartialEq)]
 pub(crate) struct CompletedTalentItem {
     pub item_id: Uuid,
+    pub claim_token: Uuid,
+    pub claim_version: i64,
     pub extraction: SafeTalentExtraction,
     pub extraction_confidence: f32,
     pub contact_candidates_ciphertext: Option<Vec<u8>>,
@@ -172,6 +187,8 @@ impl fmt::Debug for CompletedTalentItem {
         formatter
             .debug_struct("CompletedTalentItem")
             .field("item_id", &self.item_id)
+            .field("claim_token", &"[REDACTED]")
+            .field("claim_version", &self.claim_version)
             .field("extraction", &"[REDACTED SAFE JSON]")
             .field("extraction_confidence", &self.extraction_confidence)
             .field("contact_candidates_ciphertext", &"[REDACTED]")
@@ -190,6 +207,8 @@ impl fmt::Debug for CompletedTalentItem {
 #[derive(Clone, PartialEq, Serialize)]
 pub(crate) struct FailedTalentItem {
     pub item_id: Uuid,
+    pub claim_token: Uuid,
+    pub claim_version: i64,
     pub validation_errors: Value,
 }
 
@@ -487,8 +506,8 @@ pub(crate) struct TalentRecordDraft {
     pub experience_years: Option<u8>,
     pub hours_per_day: Option<u8>,
     pub rest_days_per_month: Option<u8>,
-    pub lodging: Option<bool>,
-    pub housing_allowance: Option<bool>,
+    pub lodging: Option<String>,
+    pub housing_allowance: Option<u32>,
     pub availability: Option<String>,
     pub urgency: Option<String>,
     pub source_label: Option<String>,
@@ -817,8 +836,8 @@ pub(crate) struct PublicTalentRecord {
     pub experience_years: Option<u8>,
     pub hours_per_day: Option<u8>,
     pub rest_days_per_month: Option<u8>,
-    pub lodging: Option<bool>,
-    pub housing_allowance: Option<bool>,
+    pub lodging: Option<String>,
+    pub housing_allowance: Option<u32>,
     pub availability: Option<String>,
     pub urgency: Option<String>,
     pub source_label: Option<String>,
@@ -853,6 +872,72 @@ pub(crate) enum ResourceUpdateOutcome<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TalentSourceSubscription {
+    pub subscription_id: Uuid,
+    pub source_id: Uuid,
+    pub source_name: String,
+    pub public_url: String,
+    pub keywords: Vec<String>,
+    pub interval_minutes: u32,
+    pub enabled: bool,
+    pub next_run_at: DateTime<Utc>,
+    pub incremental_cursor: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub consecutive_failures: u32,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_error_at: Option<DateTime<Utc>>,
+    pub last_error_code: Option<String>,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct UpsertTalentSourceSubscription {
+    pub subscription_id: Option<Uuid>,
+    #[serde(skip_serializing)]
+    pub source_name: String,
+    pub public_url: String,
+    pub keywords: Vec<String>,
+    pub interval_minutes: u32,
+    pub enabled: bool,
+    pub actor_user_id: Uuid,
+}
+
+impl fmt::Debug for UpsertTalentSourceSubscription {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UpsertTalentSourceSubscription")
+            .field("subscription_id", &self.subscription_id)
+            .field("source_name", &self.source_name)
+            .field("public_url", &self.public_url)
+            .field("keyword_count", &self.keywords.len())
+            .field("interval_minutes", &self.interval_minutes)
+            .field("enabled", &self.enabled)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct ClaimedTalentSourceSubscription {
+    pub run_id: Uuid,
+    pub subscription: TalentSourceSubscription,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct CompleteTalentSourceRun {
+    pub run_id: Uuid,
+    pub discovered_count: u32,
+    pub accepted_count: u32,
+    pub duplicate_count: u32,
+    pub failed_count: u32,
+    pub error_code: Option<String>,
+    pub incremental_cursor: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TalentCleanupOutcome {
     pub batches_cleaned: u64,
     pub items_cleaned: u64,
@@ -864,13 +949,16 @@ impl fmt::Debug for FailedTalentItem {
         formatter
             .debug_struct("FailedTalentItem")
             .field("item_id", &self.item_id)
+            .field("claim_token", &"[REDACTED]")
+            .field("claim_version", &self.claim_version)
             .field("validation_errors", &"[REDACTED SAFE JSON]")
             .finish()
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct NewTalentImportWire<'a> {
+    batch_id: Uuid,
     imported_by: Option<Uuid>,
     raw_text_ciphertext: String,
     encryption_key_version: u32,
@@ -889,6 +977,7 @@ impl<'a> TryFrom<&'a NewTalentImport> for NewTalentImportWire<'a> {
             bail!("talent import must contain between 1 and 500 items");
         }
         Ok(Self {
+            batch_id: import.batch_id,
             imported_by: import.imported_by,
             raw_text_ciphertext: hex_encode(&import.raw_text_ciphertext),
             encryption_key_version: import.encryption_key_version,
@@ -901,8 +990,9 @@ impl<'a> TryFrom<&'a NewTalentImport> for NewTalentImportWire<'a> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct NewTalentImportItemWire {
+    item_id: Uuid,
     position: u32,
     raw_fragment_ciphertext: String,
     encryption_key_version: u32,
@@ -912,6 +1002,7 @@ struct NewTalentImportItemWire {
 impl From<&NewTalentImportItem> for NewTalentImportItemWire {
     fn from(item: &NewTalentImportItem) -> Self {
         Self {
+            item_id: item.item_id,
             position: item.position,
             raw_fragment_ciphertext: hex_encode(&item.raw_fragment_ciphertext),
             encryption_key_version: item.encryption_key_version,
@@ -929,6 +1020,9 @@ struct ClaimedTalentItemWire {
     encryption_key_version: u32,
     kind: TalentKind,
     status: ImportItemStatus,
+    claim_token: Uuid,
+    claim_version: i64,
+    claim_expires_at: DateTime<Utc>,
 }
 
 impl ClaimedTalentItemWire {
@@ -944,13 +1038,18 @@ impl ClaimedTalentItemWire {
             encryption_key_version: self.encryption_key_version,
             kind: self.kind,
             status: self.status,
+            claim_token: self.claim_token,
+            claim_version: self.claim_version,
+            claim_expires_at: self.claim_expires_at,
         })
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct CompletedTalentItemWire<'a> {
     item_id: Uuid,
+    claim_token: Uuid,
+    claim_version: i64,
     extraction: &'a SafeTalentExtraction,
     extraction_confidence: f32,
     contact_candidates_ciphertext: Option<String>,
@@ -968,6 +1067,8 @@ impl<'a> From<&'a CompletedTalentItem> for CompletedTalentItemWire<'a> {
     fn from(item: &'a CompletedTalentItem) -> Self {
         Self {
             item_id: item.item_id,
+            claim_token: item.claim_token,
+            claim_version: item.claim_version,
             extraction: &item.extraction,
             extraction_confidence: item.extraction_confidence,
             contact_candidates_ciphertext: item.contact_candidates_ciphertext.as_deref().map(hex_encode),
@@ -1065,7 +1166,7 @@ impl TalentReviewItemWire {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct SaveTalentReviewWire<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<TalentKind>,
@@ -1109,7 +1210,7 @@ impl<'a> From<&'a SaveTalentReview> for SaveTalentReviewWire<'a> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct EncryptedTalentContactWire<'a> {
     contact_type: ContactType,
     ciphertext: String,
@@ -1183,6 +1284,31 @@ pub(crate) trait DBTalent {
         expected_updated_at: DateTime<Utc>,
     ) -> Result<ResourceUpdateOutcome<TalentSourceStatus>>;
     async fn cleanup_talent_raw_data(&self, now: DateTime<Utc>) -> Result<TalentCleanupOutcome>;
+    async fn upsert_talent_source_subscription(
+        &self,
+        subscription: UpsertTalentSourceSubscription,
+    ) -> Result<Uuid>;
+    async fn list_talent_source_subscriptions(&self) -> Result<Vec<TalentSourceSubscription>>;
+    async fn claim_talent_source_subscription(&self) -> Result<Option<ClaimedTalentSourceSubscription>>;
+    async fn complete_talent_source_run(&self, run: CompleteTalentSourceRun) -> Result<bool>;
+    async fn set_talent_source_subscription_enabled(
+        &self,
+        subscription_id: Uuid,
+        enabled: bool,
+        actor_user_id: Uuid,
+    ) -> Result<bool>;
+    async fn reserve_talent_source_item(
+        &self,
+        subscription_id: Uuid,
+        source_item_id: &str,
+        content_fingerprint: &str,
+    ) -> Result<bool>;
+    async fn release_talent_source_item(
+        &self,
+        subscription_id: Uuid,
+        source_item_id: &str,
+        content_fingerprint: &str,
+    ) -> Result<bool>;
 }
 
 #[async_trait]
@@ -1577,6 +1703,109 @@ impl DBTalent for PgDB {
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
     }
+
+    #[instrument(skip(self, subscription), err)]
+    async fn upsert_talent_source_subscription(
+        &self,
+        subscription: UpsertTalentSourceSubscription,
+    ) -> Result<Uuid> {
+        trace!("db: upsert talent source subscription");
+        let payload = serde_json::to_value(&subscription)?;
+        let db = self.pool.get().await?;
+        let row = db.query_one(
+            "with source as (select upsert_talent_source('web', $1::text, $2::uuid) source_id) select upsert_talent_source_subscription($3::jsonb || jsonb_build_object('source_id', source.source_id)) from source;",
+            &[&subscription.source_name, &subscription.actor_user_id, &payload],
+        ).await?;
+        Ok(row.get(0))
+    }
+
+    #[instrument(skip(self), err)]
+    async fn list_talent_source_subscriptions(&self) -> Result<Vec<TalentSourceSubscription>> {
+        trace!("db: list talent source subscriptions");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one("select list_talent_source_subscriptions()::text;", &[])
+            .await?;
+        Ok(serde_json::from_str(&row.get::<_, String>(0))?)
+    }
+
+    #[instrument(skip(self), err)]
+    async fn claim_talent_source_subscription(&self) -> Result<Option<ClaimedTalentSourceSubscription>> {
+        trace!("db: claim talent source subscription");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one("select claim_talent_source_subscription()::text;", &[])
+            .await?;
+        row.get::<_, Option<String>>(0)
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self, run), err)]
+    async fn complete_talent_source_run(&self, run: CompleteTalentSourceRun) -> Result<bool> {
+        trace!("db: complete talent source run");
+        let payload = serde_json::to_value(run)?;
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one("select complete_talent_source_run($1::jsonb);", &[&payload])
+            .await?;
+        Ok(row.get(0))
+    }
+
+    #[instrument(skip(self), err)]
+    async fn set_talent_source_subscription_enabled(
+        &self,
+        subscription_id: Uuid,
+        enabled: bool,
+        actor_user_id: Uuid,
+    ) -> Result<bool> {
+        trace!("db: set talent source subscription enabled");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one(
+                "select set_talent_source_subscription_enabled($1::uuid, $2::boolean, $3::uuid);",
+                &[&subscription_id, &enabled, &actor_user_id],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    #[instrument(skip(self, source_item_id, content_fingerprint), err)]
+    async fn reserve_talent_source_item(
+        &self,
+        subscription_id: Uuid,
+        source_item_id: &str,
+        content_fingerprint: &str,
+    ) -> Result<bool> {
+        trace!("db: reserve talent source item");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one(
+                "select reserve_talent_source_item($1::uuid, $2::text, $3::text);",
+                &[&subscription_id, &source_item_id, &content_fingerprint],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    #[instrument(skip(self, source_item_id, content_fingerprint), err)]
+    async fn release_talent_source_item(
+        &self,
+        subscription_id: Uuid,
+        source_item_id: &str,
+        content_fingerprint: &str,
+    ) -> Result<bool> {
+        trace!("db: release talent source item");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one(
+                "select release_talent_source_item($1::uuid, $2::text, $3::text);",
+                &[&subscription_id, &source_item_id, &content_fingerprint],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -1681,6 +1910,7 @@ mod tests {
 
     fn new_import(items: Vec<NewTalentImportItem>) -> NewTalentImport {
         NewTalentImport {
+            batch_id: Uuid::new_v4(),
             source_type: crate::talent::SourceType::Other,
             source_name: "Synthetic Source".to_owned(),
             imported_by: None,
@@ -1697,6 +1927,7 @@ mod tests {
     #[test]
     fn import_wire_contains_only_hex_encoded_ciphertext() {
         let input = new_import(vec![NewTalentImportItem {
+            item_id: Uuid::new_v4(),
             position: 0,
             raw_fragment_ciphertext: vec![10, 11, 12],
             encryption_key_version: 2,
@@ -1706,6 +1937,8 @@ mod tests {
         let wire = serde_json::to_value(NewTalentImportWire::try_from(&input).unwrap()).unwrap();
 
         assert!(wire.get("source_id").is_none());
+        assert_eq!(wire["batch_id"], input.batch_id.to_string());
+        assert_eq!(wire["items"][0]["item_id"], input.items[0].item_id.to_string());
         assert_eq!(wire["raw_text_ciphertext"], "0001feff");
         assert_eq!(wire["items"][0]["raw_fragment_ciphertext"], "0a0b0c");
         assert!(wire.to_string().find("[0,1,254,255]").is_none());
@@ -1717,6 +1950,7 @@ mod tests {
             vec![],
             (0..501)
                 .map(|position| NewTalentImportItem {
+                    item_id: Uuid::new_v4(),
                     position,
                     raw_fragment_ciphertext: vec![1],
                     encryption_key_version: 1,
@@ -1733,6 +1967,21 @@ mod tests {
                 "talent import must contain between 1 and 500 items"
             );
         }
+    }
+
+    #[test]
+    fn safe_extraction_rejects_complete_contacts_hidden_in_non_contact_fields() {
+        let unsafe_extraction = TalentExtraction {
+            title: Some("Call 13800138000".to_owned()),
+            ..TalentExtraction::default()
+        };
+
+        let error = SafeTalentExtraction::try_from(unsafe_extraction).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "safe talent extraction cannot contain protected strings"
+        );
     }
 
     #[test]
@@ -1766,6 +2015,7 @@ mod tests {
     fn claimed_item_wire_decodes_ciphertext_without_a_plaintext_field() {
         let item_id = Uuid::new_v4();
         let batch_id = Uuid::new_v4();
+        let claim_token = Uuid::new_v4();
         let wire: ClaimedTalentItemWire = serde_json::from_value(json!({
             "item_id": item_id,
             "batch_id": batch_id,
@@ -1773,7 +2023,10 @@ mod tests {
             "raw_fragment_ciphertext": "0001feff",
             "encryption_key_version": 2,
             "kind": "hiring",
-            "status": "extracting"
+            "status": "extracting",
+            "claim_token": claim_token,
+            "claim_version": 7,
+            "claim_expires_at": "2026-07-29T12:34:56Z"
         }))
         .unwrap();
 
@@ -1783,6 +2036,9 @@ mod tests {
         assert_eq!(claimed.batch_id, batch_id);
         assert_eq!(claimed.raw_fragment_ciphertext, [0, 1, 254, 255]);
         assert_eq!(claimed.status, ImportItemStatus::Extracting);
+        assert_eq!(claimed.claim_token, claim_token);
+        assert_eq!(claimed.claim_version, 7);
+        assert_eq!(claimed.claim_expires_at.to_rfc3339(), "2026-07-29T12:34:56+00:00");
     }
 
     #[test]
@@ -1795,6 +2051,8 @@ mod tests {
         .unwrap();
         let completed = super::CompletedTalentItem {
             item_id: Uuid::new_v4(),
+            claim_token: Uuid::new_v4(),
+            claim_version: 7,
             extraction,
             extraction_confidence: 0.75,
             contact_candidates_ciphertext: Some(vec![1, 2, 3]),
@@ -1833,6 +2091,8 @@ mod tests {
 
         let failed = super::FailedTalentItem {
             item_id: Uuid::new_v4(),
+            claim_token: Uuid::new_v4(),
+            claim_version: 7,
             validation_errors: json!([{"message": "private-failure-detail"}]),
         };
         assert!(!format!("{failed:?}").contains("private-failure-detail"));
@@ -1873,8 +2133,8 @@ mod tests {
             experience_years: None,
             hours_per_day: None,
             rest_days_per_month: None,
-            lodging: None,
-            housing_allowance: None,
+            lodging: Some("\u{53ef}\u{534f}\u{5546}".to_owned()),
+            housing_allowance: Some(900),
             availability: None,
             urgency: None,
             source_label: Some("Synthetic Source".to_owned()),
@@ -1890,6 +2150,8 @@ mod tests {
         let serialized = value.to_string();
 
         assert_eq!(value["contact_masked"][0]["masked_value"], "fic***902");
+        assert_eq!(value["lodging"], "\u{53ef}\u{534f}\u{5546}");
+        assert_eq!(value["housing_allowance"], 900);
         for forbidden in [
             "ciphertext",
             "normalized_hash",

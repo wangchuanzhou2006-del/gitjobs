@@ -20,6 +20,9 @@ pub(crate) mod service;
 
 pub(crate) mod processor;
 
+pub(crate) mod source_collector;
+pub(crate) mod source_subscription;
+
 #[allow(unused_imports)]
 pub(crate) use ai::*;
 #[allow(unused_imports)]
@@ -36,6 +39,10 @@ pub(crate) use risk::*;
 pub(crate) use rules::*;
 #[allow(unused_imports)]
 pub(crate) use service::*;
+#[allow(unused_imports)]
+pub(crate) use source_collector::*;
+#[allow(unused_imports)]
+pub(crate) use source_subscription::*;
 pub(crate) use splitter::*;
 #[allow(unused_imports)]
 pub(crate) use validation::*;

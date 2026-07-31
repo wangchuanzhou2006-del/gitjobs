@@ -3,6 +3,11 @@ create or replace function complete_talent_import_item(p_completion jsonb)
 returns void as $$
 declare
     v_batch_id uuid;
+    v_status text;
+    v_claim_token uuid;
+    v_claim_version bigint;
+    v_claim_expires_at timestamptz;
+    v_after talent_import_items%rowtype;
 begin
     if p_completion is null or jsonb_typeof(p_completion) <> 'object' then
         raise exception 'talent import completion must be a JSON object'
@@ -14,6 +19,8 @@ begin
         where field <> all(
             array[
                 'item_id',
+                'claim_token',
+                'claim_version',
                 'status',
                 'extraction',
                 'extraction_confidence',
@@ -369,9 +376,32 @@ begin
         raise exception 'talent completion duplicate candidates contain an invalid entry'
             using errcode = '22023';
     end if;
+    if p_completion ? 'claim_token'
+       and (
+           jsonb_typeof(p_completion->'claim_token') <> 'string'
+           or coalesce(p_completion->>'claim_token', '')
+               !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       ) then
+        raise exception 'invalid talent import claim token' using errcode = '22023';
+    end if;
+    if p_completion ? 'claim_version'
+       and (
+           jsonb_typeof(p_completion->'claim_version') <> 'number'
+           or case
+               when jsonb_typeof(p_completion->'claim_version') = 'number'
+                   then (p_completion->>'claim_version')::numeric % 1 <> 0
+                     or (p_completion->>'claim_version')::numeric
+                        not between 1 and 9223372036854775807
+               else false
+           end
+       ) then
+        raise exception 'invalid talent import claim version' using errcode = '22023';
+    end if;
     if not (
         p_completion ?& array[
             'item_id',
+            'claim_token',
+            'claim_version',
             'extraction',
             'extraction_confidence',
             'contact_candidates_ciphertext',
@@ -389,6 +419,32 @@ begin
             using errcode = '22023';
     end if;
 
+    select
+        batch_id,
+        status,
+        claim_token,
+        claim_version,
+        claim_expires_at
+    into
+        v_batch_id,
+        v_status,
+        v_claim_token,
+        v_claim_version,
+        v_claim_expires_at
+    from talent_import_items
+    where item_id = (p_completion->>'item_id')::uuid
+    for update;
+
+    if not found or v_status <> 'extracting' then
+        raise exception 'talent import item is not extracting';
+    end if;
+    if v_claim_token is distinct from (p_completion->>'claim_token')::uuid
+       or v_claim_version is distinct from (p_completion->>'claim_version')::bigint
+       or v_claim_expires_at is null
+       or v_claim_expires_at <= current_timestamp then
+        raise exception 'talent import claim is stale or expired' using errcode = '40001';
+    end if;
+
     update talent_import_items
     set
         status = 'needs_review',
@@ -403,15 +459,12 @@ begin
         risk_level = nullif(p_completion->>'risk_level', ''),
         risk_reasons = p_completion->'risk_reasons',
         duplicate_candidates = p_completion->'duplicate_candidates',
+        claim_token = null,
+        claim_expires_at = null,
         processed_at = current_timestamp,
         updated_at = current_timestamp
     where item_id = (p_completion->>'item_id')::uuid
-      and status = 'extracting'
-    returning batch_id into v_batch_id;
-
-    if v_batch_id is null then
-        raise exception 'talent import item is not extracting';
-    end if;
+    returning * into v_after;
 
     update talent_import_batches
     set
@@ -431,5 +484,52 @@ begin
     if not found then
         raise exception 'talent import batch counters are invalid';
     end if;
+
+    insert into talent_review_events (
+        resource_scope,
+        item_id,
+        actor_type,
+        action,
+        reason,
+        before_snapshot,
+        after_snapshot,
+        model_provider,
+        model_name,
+        prompt_version,
+        rule_version,
+        policy_version,
+        created_at
+    )
+    select
+        'item',
+        v_after.item_id,
+        'system',
+        'processing_completed',
+        'processor_completed',
+        jsonb_build_object(
+            'status', v_status,
+            'claim_version', v_claim_version
+        ),
+        jsonb_build_object(
+            'status', v_after.status,
+            'kind', v_after.kind,
+            'extraction_confidence', v_after.extraction_confidence,
+            'validation_error_count', jsonb_array_length(
+                coalesce(v_after.validation_errors, '[]'::jsonb)
+            ),
+            'risk_score', v_after.risk_score,
+            'risk_level', v_after.risk_level,
+            'duplicate_candidate_count', jsonb_array_length(
+                coalesce(v_after.duplicate_candidates, '[]'::jsonb)
+            )
+        ),
+        batch.model_provider,
+        batch.model_name,
+        batch.prompt_version,
+        'talent-risk-v1',
+        'talent-auto-publish-v1',
+        clock_timestamp()
+    from talent_import_batches batch
+    where batch.batch_id = v_batch_id;
 end;
 $$ language plpgsql;

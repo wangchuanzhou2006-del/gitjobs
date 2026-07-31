@@ -66,6 +66,21 @@ impl TalentAiProvider for TestTalentAi {
     }
 }
 
+pub(crate) fn test_talent_services(db: DynDB) -> Arc<TalentServices> {
+    let crypto = Arc::new(
+        TalentCrypto::new(
+            "1".to_owned(),
+            HashMap::from([(
+                "1".to_owned(),
+                "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
+            )]),
+            "synthetic-contact-pepper-material-v1".to_owned(),
+        )
+        .expect("deterministic test crypto should be valid"),
+    );
+    TalentServices::for_tests(db, crypto, Arc::new(TestTalentAi))
+}
+
 impl TestRouterBuilder {
     /// Builds the application router with the configured options.
     pub(crate) async fn build(self) -> Router {
@@ -74,18 +89,7 @@ impl TestRouterBuilder {
         let event_tracker = Arc::new(self.event_tracker.unwrap_or_default());
         let image_store = Arc::new(self.image_store.unwrap_or_default());
         let notifications_manager = Arc::new(self.notifications_manager.unwrap_or_default());
-        let crypto = Arc::new(
-            TalentCrypto::new(
-                "1".to_owned(),
-                HashMap::from([(
-                    "1".to_owned(),
-                    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned(),
-                )]),
-                "test-contact-pepper".to_owned(),
-            )
-            .expect("deterministic test crypto should be valid"),
-        );
-        let talent = TalentServices::for_tests(db.clone(), crypto, Arc::new(TestTalentAi));
+        let talent = test_talent_services(db.clone());
         assert!(
             !self.talent_worker_enabled,
             "handler test routers do not own background worker lifetimes"
@@ -553,6 +557,8 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
         talent: TalentConfig {
             enabled: false,
             prototype_data: false,
+            source_updates_enabled: false,
+            allowed_public_hosts: Vec::new(),
             encryption: TalentEncryptionConfig {
                 active_version: Some("test-v1".to_owned()),
                 keys: [(
@@ -561,7 +567,7 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
                 )]
                 .into_iter()
                 .collect(),
-                contact_pepper: Some(SecretValue::new("fictional-test-pepper")),
+                contact_pepper: Some(SecretValue::new("synthetic-contact-pepper-material-v1")),
             },
             ai: None,
         },

@@ -7,8 +7,9 @@ create or replace function update_talent_review_item(
 )
 returns table(item_id uuid, lock_version integer) as $$
 declare
-    v_item_id uuid;
-    v_lock_version integer;
+    v_before talent_import_items%rowtype;
+    v_after talent_import_items%rowtype;
+    v_batch talent_import_batches%rowtype;
 begin
     if p_updates is null or jsonb_typeof(p_updates) <> 'object' then
         raise exception 'talent review update must be a JSON object' using errcode = '22023';
@@ -335,6 +336,18 @@ begin
             using errcode = '22023';
     end if;
 
+    select *
+    into v_before
+    from talent_import_items
+    where item_id = p_item_id
+      and lock_version = p_lock_version
+      and status = 'needs_review'
+    for update;
+
+    if not found then
+        return;
+    end if;
+
     update talent_import_items as reviewed
     set
         kind = coalesce(nullif(p_updates->>'kind', ''), reviewed.kind),
@@ -365,36 +378,46 @@ begin
     where reviewed.item_id = p_item_id
       and reviewed.lock_version = p_lock_version
       and reviewed.status = 'needs_review'
-    returning reviewed.item_id, reviewed.lock_version
-    into v_item_id, v_lock_version;
-
-    if v_item_id is null then
-        return;
-    end if;
+    returning reviewed.* into v_after;
 
     insert into talent_review_events (
+        resource_scope,
         item_id,
         actor_type,
         actor_user_id,
         action,
         before_snapshot,
-        after_snapshot
+        after_snapshot,
+        model_provider,
+        model_name,
+        prompt_version,
+        rule_version,
+        policy_version,
+        created_at
     )
-    values (
-        v_item_id,
+    select
+        'item',
+        v_after.item_id,
         'moderator',
         p_actor_user_id,
         'review_updated',
-        jsonb_build_object('lock_version', p_lock_version),
+        jsonb_build_object('review_state', talent_review_state_snapshot(v_before)),
         jsonb_build_object(
-            'lock_version', v_lock_version,
+            'review_state', talent_review_state_snapshot(v_after),
             'manual_policy_reasons',
             coalesce(p_updates->'manual_policy_reasons', '[]'::jsonb)
-        )
-    );
+        ),
+        batch.model_provider,
+        batch.model_name,
+        batch.prompt_version,
+        'talent-risk-v1',
+        'talent-auto-publish-v1',
+        clock_timestamp()
+    from talent_import_batches batch
+    where batch.batch_id = v_after.batch_id;
 
-    item_id := v_item_id;
-    lock_version := v_lock_version;
+    item_id := v_after.item_id;
+    lock_version := v_after.lock_version;
     return next;
 end;
 $$ language plpgsql;

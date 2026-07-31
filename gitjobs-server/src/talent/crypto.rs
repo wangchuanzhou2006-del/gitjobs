@@ -12,6 +12,7 @@ use thiserror::Error;
 use super::{ContactCandidate, ContactType};
 
 const NONCE_LEN: usize = 12;
+const MIN_CONTACT_PEPPER_BYTES: usize = 32;
 const TAG_LEN: usize = 16;
 
 /// AES-256-GCM envelope bound to a key version.
@@ -40,6 +41,8 @@ pub(crate) enum CryptoError {
     MissingActiveKey,
     #[error("contact hash pepper is empty")]
     EmptyContactPepper,
+    #[error("contact hash pepper does not meet the minimum strength policy")]
+    WeakContactPepper,
     #[error("encrypted value uses an unknown key version")]
     UnknownKeyVersion,
     #[error("encrypted value has an invalid envelope")]
@@ -77,6 +80,9 @@ impl TalentCrypto {
             return Err(CryptoError::EmptyContactPepper);
         }
 
+        if contact_pepper.len() < MIN_CONTACT_PEPPER_BYTES || contact_pepper_is_placeholder(&contact_pepper) {
+            return Err(CryptoError::WeakContactPepper);
+        }
         Ok(Self {
             active_version,
             keys,
@@ -125,6 +131,19 @@ impl TalentCrypto {
         decrypt_aead(Cipher::aes_256_gcm(), key, Some(nonce), aad, ciphertext, tag)
             .map_err(|_| CryptoError::DecryptionFailed)
     }
+}
+fn contact_pepper_is_placeholder(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    [
+        "change-me",
+        "changeme",
+        "replace-me",
+        "placeholder",
+        "example-secret",
+        "invalid-independent-secret",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 /// Normalizes a contact value before private deduplication.
@@ -258,7 +277,7 @@ mod tests {
 
     const CURRENT_KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     const PREVIOUS_KEY: &str = "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100";
-    const TEST_PEPPER: &str = "fictional-test-pepper";
+    const TEST_PEPPER: &str = "synthetic-contact-pepper-material-v1";
 
     fn crypto(active_version: &str, keys: &[(&str, &str)]) -> TalentCrypto {
         TalentCrypto::new(
@@ -271,6 +290,44 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn rejects_contact_peppers_shorter_than_thirty_two_bytes() {
+        let error = TalentCrypto::new(
+            "current".to_owned(),
+            HashMap::from([("current".to_owned(), CURRENT_KEY.to_owned())]),
+            "short-contact-pepper".to_owned(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, super::CryptoError::WeakContactPepper);
+    }
+
+    #[test]
+    fn rejects_known_placeholder_contact_peppers_even_when_long_enough() {
+        let error = TalentCrypto::new(
+            "current".to_owned(),
+            HashMap::from([("current".to_owned(), CURRENT_KEY.to_owned())]),
+            "replace-me-contact-pepper-material-123456".to_owned(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, super::CryptoError::WeakContactPepper);
+    }
+
+    #[test]
+    fn accepts_a_thirty_two_byte_contact_pepper() {
+        let pepper = "0123456789abcdef0123456789abcdef";
+
+        assert_eq!(pepper.len(), 32);
+        assert!(
+            TalentCrypto::new(
+                "current".to_owned(),
+                HashMap::from([("current".to_owned(), CURRENT_KEY.to_owned())]),
+                pepper.to_owned(),
+            )
+            .is_ok()
+        );
+    }
     #[test]
     fn encrypts_and_decrypts_with_aad() {
         let crypto = crypto("current", &[("current", CURRENT_KEY)]);

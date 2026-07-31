@@ -10,6 +10,14 @@
     {% include "platform/components/exploration_rail.html" %}
     <main id="main-content" class="talent-main opportunity-main">
       {% include "platform/components/talent_command_bar.html" %}
+      <details class="talent-usage-guide opportunity-surface">
+        <summary>怎么使用</summary>
+        <ol>
+          <li>选择“招聘机会”或“求职人才”。</li>
+          <li>输入地区、岗位、工资等条件，再点击“生成匹配”。</li>
+          <li>打开“查看详情”，核对要求、来源和联系方式。</li>
+        </ol>
+      </details>
       {% if prototype_mode %}<p role="note">界面原型数据，不代表真实招聘或求职信息</p>{% endif %}
       {% include "platform/components/talent_results.html" %}
       {% include "platform/components/talent_detail_drawer.html" %}

@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(47);
 
 \set sourceCreator '00000000-0000-0000-0000-000000000511'
 
@@ -273,6 +273,15 @@ select is(
     'claim atomically moves an item to extracting'
 );
 
+select ok(
+    :'first_claim'::jsonb ?& array['claim_token', 'claim_version', 'claim_expires_at']
+    and (:'first_claim'::jsonb->>'claim_token')
+        ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    and (:'first_claim'::jsonb->>'claim_version')::bigint = 1
+    and (:'first_claim'::jsonb->>'claim_expires_at')::timestamptz > current_timestamp,
+    'claim returns a fresh fencing token, monotonic version, and bounded expiry'
+);
+
 select claim_talent_import_item() as second_claim
 \gset
 
@@ -543,6 +552,8 @@ select lives_ok(
         select complete_talent_import_item(
             jsonb_build_object(
                 'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
                 'status', 'needs_review',
                 'extraction', jsonb_build_object(
                     'kind', 'hiring',
@@ -563,7 +574,9 @@ select lives_ok(
             )
         )
         $sql$,
-        :'first_claim'::jsonb->>'item_id'
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
     ),
     'contact-free safe extraction with encrypted contacts can be completed'
 );
@@ -602,13 +615,17 @@ select lives_ok(
         select fail_talent_import_item(
             jsonb_build_object(
                 'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
                 'validation_errors', jsonb_build_array(
                     jsonb_build_object('code', 'synthetic_failure', 'field', 'fragment')
                 )
             )
         )
         $sql$,
-        :'second_claim'::jsonb->>'item_id'
+        :'second_claim'::jsonb->>'item_id',
+        :'second_claim'::jsonb->>'claim_token',
+        :'second_claim'::jsonb->>'claim_version'
     ),
     'an extracting item can fail'
 );
@@ -621,6 +638,23 @@ select results_eq(
     $$,
     $$ values ('partially_failed'::text, 2, 1) $$,
     'one item failure produces a partially failed completed batch'
+
+select results_eq(
+    format(
+        $$
+        select resource_scope, action, reason,
+               before_snapshot->>'status', after_snapshot->>'status',
+               (after_snapshot->>'validation_error_count')::integer
+        from talent_review_events
+        where item_id = %L::uuid
+          and action = 'processing_failed'
+        $$,
+        :'second_claim'::jsonb->>'item_id'
+    ),
+    $$ values ('item'::text, 'processing_failed'::text, 'processor_failed'::text,
+               'extracting'::text, 'failed'::text, 1::integer) $$,
+    'failed processing writes a privacy-safe scoped audit event'
+);
 );
 
 select throws_ok(
@@ -629,6 +663,8 @@ select throws_ok(
         select complete_talent_import_item(
             jsonb_build_object(
                 'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
                 'status', 'needs_review',
                 'extraction', '{}'::jsonb,
                 'extraction_confidence', 0.5,
@@ -644,7 +680,9 @@ select throws_ok(
             )
         )
         $sql$,
-        :'first_claim'::jsonb->>'item_id'
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
     ),
     'P0001',
     'talent import item is not extracting',
@@ -657,11 +695,15 @@ select throws_ok(
         select fail_talent_import_item(
             jsonb_build_object(
                 'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
                 'validation_errors', jsonb_build_array()
             )
         )
         $sql$,
-        :'first_claim'::jsonb->>'item_id'
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
     ),
     'P0001',
     'talent import item is not extracting',
@@ -674,6 +716,23 @@ select is(
     'claim returns null when no queued item remains'
 );
 
+insert into talent_import_batches (
+    batch_id,
+    source_id,
+    status,
+    item_count,
+    processed_count,
+    failed_count
+)
+values (
+    '00000000-0000-0000-0000-000000000598',
+    :'source_id',
+    'queued',
+    1,
+    0,
+    0
+);
+
 insert into talent_import_items (
     item_id,
     batch_id,
@@ -681,19 +740,20 @@ insert into talent_import_items (
     raw_fragment_ciphertext,
     encryption_key_version,
     kind,
-    status,
-    updated_at
+    status
 )
 values (
     '00000000-0000-0000-0000-000000000599',
-    (:'first_claim'::jsonb->>'batch_id')::uuid,
-    999,
+    '00000000-0000-0000-0000-000000000598',
+    0,
     '9999',
     1,
     'hiring',
-    'extracting',
-    current_timestamp - interval '40 seconds'
+    'queued'
 );
+
+select claim_talent_import_item() as owner_a_claim
+\gset
 
 select is(
     claim_talent_import_item(),
@@ -702,13 +762,176 @@ select is(
 );
 
 update talent_import_items
-set updated_at = current_timestamp - interval '3 minutes'
+set claim_expires_at = current_timestamp - interval '1 second'
 where item_id = '00000000-0000-0000-0000-000000000599';
 
+select claim_talent_import_item() as owner_b_claim
+\gset
+
 select is(
-    claim_talent_import_item()->>'item_id',
+    :'owner_b_claim'::jsonb->>'item_id',
     '00000000-0000-0000-0000-000000000599',
     'claim lease recovers a stale extracting item after worker interruption'
+);
+
+select isnt(
+    :'owner_b_claim'::jsonb->>'claim_token',
+    :'owner_a_claim'::jsonb->>'claim_token',
+    'reclaim issues a different ownership token'
+);
+
+select is(
+    (:'owner_b_claim'::jsonb->>'claim_version')::bigint,
+    (:'owner_a_claim'::jsonb->>'claim_version')::bigint + 1,
+    'reclaim advances the monotonic fencing version'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'owner_a_claim'::jsonb->>'item_id',
+        :'owner_a_claim'::jsonb->>'claim_token',
+        :'owner_a_claim'::jsonb->>'claim_version'
+    ),
+    '40001',
+    'talent import claim is stale or expired',
+    'late owner A cannot complete after owner B reclaims the item'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select fail_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'validation_errors', jsonb_build_array(
+                    jsonb_build_object('code', 'late_owner_a')
+                )
+            )
+        )
+        $sql$,
+        :'owner_a_claim'::jsonb->>'item_id',
+        :'owner_a_claim'::jsonb->>'claim_token',
+        :'owner_a_claim'::jsonb->>'claim_version'
+    ),
+    '40001',
+    'talent import claim is stale or expired',
+    'late owner A cannot fail after owner B reclaims the item'
+);
+
+select results_eq(
+    $$
+    select
+        item.status,
+        item.claim_token,
+        item.claim_version,
+        batch.processed_count,
+        batch.failed_count
+    from talent_import_items item
+    join talent_import_batches batch using (batch_id)
+    where item.item_id = '00000000-0000-0000-0000-000000000599'
+    $$,
+    format(
+        $$ values ('extracting'::text, %L::uuid, %s::bigint, 0, 0) $$,
+        :'owner_b_claim'::jsonb->>'claim_token',
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'late owner A operations leave owner B and batch counters unchanged'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'owner_b_claim'::jsonb->>'item_id',
+        :'owner_b_claim'::jsonb->>'claim_token',
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'current owner B can complete the reclaimed item'
+);
+
+select results_eq(
+    $$
+    select
+        item.status,
+        item.claim_token,
+        item.claim_version,
+        item.claim_expires_at,
+        batch.status,
+        batch.processed_count,
+        batch.failed_count
+    from talent_import_items item
+    join talent_import_batches batch using (batch_id)
+    where item.item_id = '00000000-0000-0000-0000-000000000599'
+    $$,
+    format(
+        $$ values (
+            'needs_review'::text,
+            null::uuid,
+            %s::bigint,
+            null::timestamptz,
+            'completed'::text,
+            1,
+            0
+        ) $$,
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'completion clears lease ownership while retaining the monotonic version'
+);
+
+select results_eq(
+    $$
+    select resource_scope, action, reason,
+           before_snapshot->>'status', after_snapshot->>'status',
+           (after_snapshot->>'duplicate_candidate_count')::integer
+    from talent_review_events
+    where item_id = '00000000-0000-0000-0000-000000000599'::uuid
+      and action = 'processing_completed'
+    $$,
+    $$ values ('item'::text, 'processing_completed'::text, 'processor_completed'::text,
+               'extracting'::text, 'needs_review'::text, 0::integer) $$,
+    'completed processing writes a privacy-safe scoped audit event'
 );
 
 select * from finish();

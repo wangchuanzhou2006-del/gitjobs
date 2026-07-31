@@ -1,5 +1,5 @@
 begin;
-select plan(69);
+select plan(82);
 
 \set moderatorId '00000000-0000-0000-0000-000000000601'
 \set secondModeratorId '00000000-0000-0000-0000-000000000602'
@@ -91,7 +91,7 @@ values
         '[{"contact_type":"wechat","masked_value":"fic***601"}]'::jsonb,
         'synthetic-fingerprint-601',
         'hiring', 'needs_review',
-        '{"kind":"hiring","title":"Synthetic Rust Role","city":"Test City","salaryMin":1000,"salaryMax":2000,"missingFields":[]}'::jsonb,
+        '{"kind":"hiring","title":"Synthetic Rust Role","city":"Test City","salaryMin":1000,"salaryMax":2000,"lodging":"\u63d0\u4f9b","housingAllowance":1200,"missingFields":[]}'::jsonb,
         0.95, '[]'::jsonb, 10, 'low', '[]'::jsonb, '[]'::jsonb, current_timestamp
     ),
     (
@@ -133,7 +133,7 @@ values
         '[{"contact_type":"wechat","masked_value":"aut***606"}]'::jsonb,
         'synthetic-fingerprint-606',
         'seeking', 'needs_review',
-        '{"kind":"seeking","title":"Automatic Candidate","city":"Test City","roles":["Synthetic Role"],"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
+        '{"kind":"seeking","title":"Automatic Candidate","city":"Test City","roles":["Synthetic Role"],"lodging":"\u53ef\u534f\u5546","housingAllowance":900,"publishedAt":"2026-07-23T00:00:00Z","missingFields":[]}'::jsonb,
         0.96, '[]'::jsonb, 5, 'low', '[]'::jsonb, '[]'::jsonb, current_timestamp
     ),
     (
@@ -394,6 +394,8 @@ select * from publish_talent_item(
         'city', 'Test City',
         'salary_min', 1000,
         'salary_max', 2000,
+        'lodging', U&'\63D0\4F9B',
+        'housing_allowance', 1200,
         'published_at', current_timestamp
     ),
     jsonb_build_array(
@@ -409,6 +411,17 @@ select * from publish_talent_item(
 \gset first_publish_
 
 select is(:'first_publish_created'::boolean, true, 'first publication creates a record');
+
+select results_eq(
+    format(
+        $$select lodging, housing_allowance
+          from talent_records
+          where record_id = %L::uuid$$,
+        :'first_publish_record_id'
+    ),
+    $$ values (U&'\63D0\4F9B'::text, 1200::bigint) $$,
+    'manual publication preserves Chinese lodging and the allowance amount'
+);
 
 select * from publish_talent_item(
     :'publishItemId',
@@ -447,6 +460,17 @@ select is(
     :'auto_publish_created'::boolean,
     true,
     'automatic publication creates a formal record only after all gates pass'
+);
+
+select results_eq(
+    format(
+        $$select lodging, housing_allowance
+          from talent_records
+          where record_id = %L::uuid$$,
+        :'auto_publish_record_id'
+    ),
+    $$ values (U&'\53EF\534F\5546'::text, 900::bigint) $$,
+    'automatic publication preserves lodging and the allowance amount'
 );
 
 select results_eq(
@@ -876,6 +900,12 @@ select is(
     'stale global auto-publish leaves the resource token unchanged'
 );
 
+select is(
+    (select count(*) from talent_review_events where resource_scope = 'runtime'),
+    1::bigint,
+    'a stale runtime control write creates no audit event'
+);
+
 select throws_ok(
     format(
         $$select * from publish_talent_item(%L::uuid, 0, null, true, '{}'::jsonb, '[{"contact_type":"wechat","ciphertext":"7474","encryption_key_version":1,"normalized_hash":"synthetic-gate-hash","masked_value":"gat***608"}]'::jsonb)$$,
@@ -892,6 +922,50 @@ select set_talent_auto_publish(
     (select updated_at from talent_runtime_settings where singleton)
 ) as resumed_global_outcome
 \gset
+
+select updated_at as global_resumed_updated_at
+from talent_runtime_settings
+where singleton
+\gset
+
+select set_talent_auto_publish(
+    true,
+    :'moderatorId',
+    :'global_resumed_updated_at'
+) as noop_global_outcome
+\gset
+
+select results_eq(
+    $$
+    select
+        :'noop_global_outcome'::jsonb->>'outcome',
+        updated_at = :'global_resumed_updated_at'::timestamptz,
+        (select count(*) from talent_review_events where resource_scope = 'runtime')
+    from talent_runtime_settings
+    where singleton
+    $$,
+    $$ values ('updated'::text, true, 2::bigint) $$,
+    'runtime no-op preserves the token and creates no duplicate audit event'
+);
+
+select results_eq(
+    $$
+    select
+        reason,
+        (before_snapshot->>'auto_publish_enabled')::boolean,
+        (after_snapshot->>'auto_publish_enabled')::boolean,
+        actor_user_id
+    from talent_review_events
+    where resource_scope = 'runtime'
+    order by created_at, event_id
+    $$,
+    $$
+    values
+        ('auto_publish_paused'::text, true, false, '00000000-0000-0000-0000-000000000601'::uuid),
+        ('auto_publish_resumed'::text, false, true, '00000000-0000-0000-0000-000000000601'::uuid)
+    $$,
+    'runtime audit history records privacy-safe before and after state with the actor'
+);
 update talent_sources set auto_publish_enabled = false where source_id = :'sourceId';
 
 select throws_ok(
@@ -1157,6 +1231,34 @@ select is(
 select is(
     (select updated_at from talent_sources where source_id = :'sourceId'),
     :'trusted_source_updated_at'::timestamptz,
+
+select is(
+    (select count(*) from talent_review_events where resource_scope = 'source'),
+    1::bigint,
+    'a stale source policy write creates no audit event'
+);
+
+select set_talent_source_status(
+    :'sourceId',
+    'trusted',
+    :'secondModeratorId',
+    true,
+    :'trusted_source_updated_at'
+) as noop_source_outcome
+\gset
+
+select results_eq(
+    $$
+    select
+        :'noop_source_outcome'::jsonb->>'outcome',
+        updated_at = :'trusted_source_updated_at'::timestamptz,
+        (select count(*) from talent_review_events where resource_scope = 'source')
+    from talent_sources
+    where source_id = :'sourceId'::uuid
+    $$,
+    $$ values ('updated'::text, true, 1::bigint) $$,
+    'source policy no-op preserves the token and creates no duplicate audit event'
+);
     'stale source trust leaves the resource token unchanged'
 );
 
@@ -1238,6 +1340,33 @@ select * from set_talent_source_status(
     (select updated_at from talent_sources where source_id = :'sourceId')
 );
 
+
+select results_eq(
+    $$
+    select
+        reason,
+        before_snapshot->>'trust_status',
+        after_snapshot->>'trust_status',
+        (before_snapshot->>'auto_publish_enabled')::boolean,
+        (after_snapshot->>'auto_publish_enabled')::boolean,
+        actor_user_id
+    from talent_review_events
+    where resource_scope = 'source'
+    order by created_at, event_id
+    $$,
+    $$
+    values
+        ('source_reconfirmed'::text, 'trusted'::text, 'trusted'::text, true, true,
+            '00000000-0000-0000-0000-000000000602'::uuid),
+        ('source_watchlisted'::text, 'trusted'::text, 'watchlist'::text, true, false,
+            '00000000-0000-0000-0000-000000000602'::uuid),
+        ('source_blocked'::text, 'watchlist'::text, 'blocked'::text, false, false,
+            '00000000-0000-0000-0000-000000000602'::uuid),
+        ('source_trusted'::text, 'blocked'::text, 'trusted'::text, false, true,
+            '00000000-0000-0000-0000-000000000602'::uuid)
+    $$,
+    'source policy audit preserves the full scoped history'
+);
 insert into talent_import_items (
     item_id,
     batch_id,
@@ -1382,8 +1511,12 @@ select results_eq(
 select * from update_talent_review_item(
     :'gateItemId',
     0,
-    '{"manual_policy_reasons":["source_not_trusted"]}'::jsonb,
+    '{"extraction":{"title":"Audit Revised Role"},"manual_policy_reasons":["source_not_trusted"]}'::jsonb,
     :'moderatorId'
+update talent_import_items
+set extraction = jsonb_set(extraction, '{title}', to_jsonb('13900000001'::text))
+where item_id = :'gateItemId';
+
 );
 
 select results_eq(
@@ -1405,3 +1538,56 @@ select results_eq(
 
 select * from finish();
 rollback;
+
+select ok(
+    (
+        select
+            event.resource_scope = 'item'
+            and event.before_snapshot ? 'review_state'
+            and event.after_snapshot ? 'review_state'
+            and event.before_snapshot->'review_state' <> event.after_snapshot->'review_state'
+        from talent_review_events event
+        where event.item_id = :'gateItemId'
+          and event.action = 'review_updated'
+        order by event.created_at desc, event.event_id desc
+        limit 1
+    ),
+    'review audit stores the actual structured before and after states'
+);
+
+select ok(
+    (
+        select position('13900000001' in before_snapshot::text || after_snapshot::text) = 0
+        from talent_review_events
+        where item_id = :'gateItemId'
+          and action = 'review_updated'
+        order by created_at desc, event_id desc
+        limit 1
+    ),
+    'review audit snapshots redact complete contacts from every structured field'
+);
+
+select throws_ok(
+    $$update talent_review_events set action = 'tampered' where item_id is not null$$,
+    '55000',
+    'talent audit history is append-only',
+    'audit events cannot be updated'
+);
+
+select throws_ok(
+    $$delete from talent_review_events where item_id is not null$$,
+    '55000',
+    'talent audit history is append-only',
+    'audit events cannot be deleted'
+);
+
+select throws_ok(
+    format(
+        $$insert into talent_review_events (resource_scope, item_id, actor_type, action)
+          values ('runtime', %L::uuid, 'system', 'invalid_scope')$$,
+        :'gateItemId'
+    ),
+    '23514',
+    null,
+    'audit event resource scope must match its bound identity'
+);

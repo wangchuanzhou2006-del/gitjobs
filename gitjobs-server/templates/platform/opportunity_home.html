@@ -10,6 +10,14 @@
     {% include "platform/components/exploration_rail.html" %}
     <main id="main-content" class="opportunity-main">
       {% include "platform/components/ai_command_bar.html" %}
+      <details class="opportunity-usage-guide opportunity-surface">
+        <summary>怎么使用</summary>
+        <ol>
+          <li>输入地区、项目类型、规模或你的承接能力。</li>
+          <li>点击“生成机会视图”，星图会突出符合条件的项目。</li>
+          <li>向下查看对应项目卡片，核对来源、可信度和截止时间。</li>
+        </ol>
+      </details>
       <p role="note">界面原型数据，不代表真实项目</p>
       {% include "platform/components/opportunity_graph.html" %}
       {% include "platform/components/opportunity_fallback.html" %}

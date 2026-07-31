@@ -22,7 +22,7 @@ type TalentRecord = {
   hoursPerDay: number | null;
   restDays: number | null;
   lodging: string | null;
-  housingAllowance: boolean | null;
+  housingAllowance: number | null;
   availability: string | null;
   urgency: string | null;
   credibility: number | null;
@@ -362,7 +362,7 @@ test.describe("餐饮人才工作台", () => {
         hoursPerDay: 8,
         restDays: 4,
         lodging: "提供（原型）",
-        housingAllowance: false,
+        housingAllowance: 0,
         availability: "随时到岗（原型）",
         urgency: "较高（原型）",
         sourceLabel: "平台演示数据",

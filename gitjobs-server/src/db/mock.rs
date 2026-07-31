@@ -387,6 +387,38 @@ mock! {
             &self,
             now: DateTime<Utc>,
         ) -> Result<crate::db::talent::TalentCleanupOutcome>;
+        async fn upsert_talent_source_subscription(
+            &self,
+            subscription: crate::db::talent::UpsertTalentSourceSubscription,
+        ) -> Result<Uuid>;
+        async fn list_talent_source_subscriptions(
+            &self,
+        ) -> Result<Vec<crate::db::talent::TalentSourceSubscription>>;
+        async fn claim_talent_source_subscription(
+            &self,
+        ) -> Result<Option<crate::db::talent::ClaimedTalentSourceSubscription>>;
+        async fn complete_talent_source_run(
+            &self,
+            run: crate::db::talent::CompleteTalentSourceRun,
+        ) -> Result<bool>;
+        async fn set_talent_source_subscription_enabled(
+            &self,
+            subscription_id: Uuid,
+            enabled: bool,
+            actor_user_id: Uuid,
+        ) -> Result<bool>;
+        async fn reserve_talent_source_item(
+            &self,
+            subscription_id: Uuid,
+            source_item_id: &str,
+            content_fingerprint: &str,
+        ) -> Result<bool>;
+        async fn release_talent_source_item(
+            &self,
+            subscription_id: Uuid,
+            source_item_id: &str,
+            content_fingerprint: &str,
+        ) -> Result<bool>;
     }
 
     #[async_trait]
