@@ -842,19 +842,19 @@ git commit -s -m "test: verify talent import review workflow"
 - Produces: Moderator-managed public source, keyword topic, update interval, enabled state, incremental cursor, and privacy-safe run summary.
 - Preserves: manual paste import, source trust, AI extraction, duplicate detection, risk gates, review, publication, and cleanup behavior.
 
-- [ ] **Step 1: Add subscription persistence and atomic claims**
+- [x] **Step 1: Add subscription persistence and atomic claims**
 
 Store only approved public HTTPS URLs. A subscription belongs to one `talent_sources` row and contains normalized keywords, interval, enabled state, next run time, incremental cursor, conditional-request metadata, consecutive failure count, and last success/error timestamps. Store each run's discovered, accepted, duplicate, and failed counters without response bodies. Claim due subscriptions with `FOR UPDATE SKIP LOCKED`; one broken source must not block another.
 
-- [ ] **Step 2: Implement strict source safety and deterministic filtering**
+- [x] **Step 2: Implement strict source safety and deterministic filtering**
 
 Allow collection only when the URL host is present in a server-side allowlist. Reject credentials, fragments, non-HTTPS schemes, IP literals, localhost, and redirects to a different or disallowed host. Resolve and reject private, loopback, link-local, multicast, and reserved addresses before every request. Limit redirects, response bytes, elapsed time, and requests per run. Match normalized keywords against title and text using deterministic case-insensitive rules before invoking AI.
 
-- [ ] **Step 3: Implement incremental public-feed collection**
+- [x] **Step 3: Implement incremental public-feed collection**
 
 Support RSS and Atom first because they provide stable item identifiers and publication times. Use `ETag` and `Last-Modified` when available, then deduplicate entries by source item ID or normalized content fingerprint. Convert accepted entries to ordinary `NewImport` batches with source type `web`; never auto-publish from the collector itself. A failed fetch records a safe error code, applies bounded exponential backoff, and leaves the previous cursor intact.
 
-- [ ] **Step 4: Add the source worker and a mobile-first information radar**
+- [x] **Step 4: Add the source worker and a mobile-first information radar**
 
 Run one low-frequency source worker alongside the existing talent processor. Add a mobile-first “信息雷达” view that inherits the existing product shell and visual tokens. Its first viewport shows one restrained live-search status band, what the system is watching, newly found count, and whether anything needs attention. This is the single expressive visual moment; the rest of the view stays quiet and direct.
 
@@ -862,15 +862,15 @@ Adding a source is a one-column flow using the exact user-facing concepts “从
 
 At 360 CSS pixels the layout remains single-column, all interactive targets are at least 44 by 44 CSS pixels, long Chinese labels wrap without collision, the software keyboard does not cover the primary action, and no horizontal scroll appears. Desktop adds breathing room but preserves the same hierarchy instead of becoming an admin parameter grid. Respect reduced motion, visible keyboard focus, semantic labels, and non-color status cues.
 
-- [ ] **Step 5: Prove isolation and compatibility**
+- [x] **Step 5: Prove isolation and compatibility**
 
 Unit tests cover RSS/Atom parsing, keyword normalization, unchanged feeds, cursor updates, response-size limits, timeout/backoff, redirect rejection, private-address rejection, and safe errors. Database tests cover atomic claims and stale-worker recovery. E2E tests prove manual paste import behaves unchanged, a fictional allowlisted feed creates a normal batch, repeated runs create no duplicate batch items, and collected entries cannot bypass review or source trust gates. Visual tests cover 360x800 mobile, a modern phone viewport, desktop, empty/loading/success/failure states, the software-keyboard-safe action area, reduced motion, and text overlap.
 
-- [ ] **Step 6: Update operations and run the full verification matrix**
+- [x] **Step 6: Update operations and run the full verification matrix**
 
 Document allowlist ownership, source permission checks, robots/terms review, emergency disable, backoff recovery, and removal of a source. Run the Task 12 verification matrix plus the focused source-subscription database, Rust, and browser tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add database gitjobs-server config tests/e2e/dashboard/moderator/talent-import-review.spec.ts docs/operations/talent-import-review.md
