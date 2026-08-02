@@ -274,9 +274,13 @@ mod tests {
         let cleaned = Arc::new(Notify::new());
         let cleanup_signal = cleaned.clone();
         let mut db = MockDB::new();
-        db.expect_cleanup_talent_raw_data().times(1).returning(move |_| {
+        db.expect_cleanup_talent_raw_data().times(1).returning(move |now| {
             cleanup_signal.notify_one();
-            Ok(())
+            Ok(crate::db::talent::TalentCleanupOutcome {
+                batches_cleaned: 0,
+                items_cleaned: 0,
+                cleaned_at: now,
+            })
         });
         db.expect_claim_talent_import_item().never();
         let db: DynDB = Arc::new(db);

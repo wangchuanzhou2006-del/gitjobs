@@ -219,8 +219,8 @@ mod tests {
         assert!(html.contains("厨师"));
         assert_eq!(
             html.matches("炒锅").count(),
-            2,
-            "HTML fallback and browser JSON should each retain it once"
+            3,
+            "server card, server detail, and browser JSON should each retain it once"
         );
         assert!(html.contains("刀工"));
         assert!(html.contains("138****8000"));
@@ -260,7 +260,7 @@ mod tests {
             );
         }
         assert!(html.contains("data-talent-mode=\"hiring\""));
-        assert!(html.contains("data-talent-mode=\"seeking\""));
+        assert!(html.contains("data-talent-mode-button=\"seeking\""));
         assert_eq!(html.matches("<article class=\"talent-card\"").count(), 1);
         assert!(html.contains("id=\"talent-detail-drawer\""));
         assert!(html.contains("aria-live=\"polite\""));

@@ -41,7 +41,11 @@ pub(crate) fn validate_source_subscription(
         .host_str()
         .ok_or(SourceSubscriptionError::UnsafeUrl)?
         .to_ascii_lowercase();
-    if host == "localhost" || host.parse::<IpAddr>().is_ok() {
+    let ip_host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(&host);
+    if host == "localhost" || ip_host.parse::<IpAddr>().is_ok() {
         return Err(SourceSubscriptionError::UnsafeUrl);
     }
     if !allowed_hosts

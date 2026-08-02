@@ -1,5 +1,6 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::struct_field_names)]
+#![recursion_limit = "256"]
 
 use std::{path::PathBuf, sync::Arc};
 

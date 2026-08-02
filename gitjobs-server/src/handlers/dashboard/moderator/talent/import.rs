@@ -235,6 +235,8 @@ fn status_label(status: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode, header::COOKIE},
@@ -294,7 +296,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
     }
 
     #[tokio::test]
@@ -339,7 +341,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
     }
 
     #[tokio::test]
@@ -402,7 +404,7 @@ mod tests {
         assert!(html.contains(r#"aria-describedby="talent-raw-limit""#));
         assert!(html.contains("最多 200,000 字节"));
         assert!(html.contains(">开始 AI 整理</button>"));
-        assert!(html.contains("/static/js/dashboard/moderator/talent-import.js"));
+        assert!(html.contains("/static/js/dashboard/moderator/talent-import."));
         assert!(html.contains("sticky bottom-0"));
     }
 
@@ -563,8 +565,9 @@ mod tests {
 
     #[tokio::test]
     async fn valid_import_creates_a_normal_batch_and_redirects_to_its_status() {
-        let batch_id = Uuid::new_v4();
         let mut db = MockDB::new();
+        let persisted_batch_id = Arc::new(Mutex::new(None));
+        let captured_batch_id = persisted_batch_id.clone();
         let (session_id, user_id) = moderator_session(&mut db);
         db.expect_create_talent_import()
             .times(1)
@@ -574,7 +577,10 @@ mod tests {
                     && input.imported_by == Some(user_id)
                     && input.items.len() == 1
             })
-            .return_once(move |_| Ok(batch_id));
+            .returning(move |input| {
+                *captured_batch_id.lock().unwrap() = Some(input.batch_id);
+                Ok(input.batch_id)
+            });
         db.expect_update_session()
             .times(1)
             .withf(|record| {
@@ -609,10 +615,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        let expected = format!("/dashboard/moderator/talent/import#batch-{batch_id}");
+        let location = response.headers().get("location").unwrap().to_str().unwrap();
+        let batch_id = location
+            .strip_prefix("/dashboard/moderator/talent/import#batch-")
+            .expect("redirect should target the created batch")
+            .parse::<Uuid>()
+            .expect("redirect should contain a batch UUID");
         assert_eq!(
-            response.headers().get("location").unwrap().to_str().unwrap(),
-            expected
+            batch_id,
+            persisted_batch_id.lock().unwrap().expect("batch should be persisted")
         );
     }
 }

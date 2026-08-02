@@ -1077,7 +1077,7 @@ mod tests {
         let mut db = MockDB::new();
         db.expect_create_talent_import()
             .times(1)
-            .returning(|_| Ok(Uuid::new_v4()));
+            .returning(|import| Ok(import.batch_id));
         let ai = Arc::new(CountingAi(AtomicUsize::new(0)));
         let services = TalentServices::for_tests(Arc::new(db), crypto(), ai.clone());
 

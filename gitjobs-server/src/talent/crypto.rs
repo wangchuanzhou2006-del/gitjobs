@@ -297,7 +297,8 @@ mod tests {
             HashMap::from([("current".to_owned(), CURRENT_KEY.to_owned())]),
             "short-contact-pepper".to_owned(),
         )
-        .unwrap_err();
+        .err()
+        .expect("weak pepper should be rejected");
 
         assert_eq!(error, super::CryptoError::WeakContactPepper);
     }
@@ -309,7 +310,8 @@ mod tests {
             HashMap::from([("current".to_owned(), CURRENT_KEY.to_owned())]),
             "replace-me-contact-pepper-material-123456".to_owned(),
         )
-        .unwrap_err();
+        .err()
+        .expect("placeholder pepper should be rejected");
 
         assert_eq!(error, super::CryptoError::WeakContactPepper);
     }

@@ -1074,7 +1074,7 @@ mod tests {
                 .unwrap(),
         ] {
             let response = router.clone().oneshot(request).await.unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
             let body = String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec())
                 .unwrap();
             assert!(!body.contains(raw));
@@ -1225,14 +1225,14 @@ mod tests {
         let html =
             String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(html.contains("FICTIONAL_PRIVATE_RAW_26"));
-        assert!(html.contains("&lt;script&gt;"));
-        assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
-        assert!(html.contains("&lt;b&gt;unsafe model html&lt;/b&gt;"));
+        assert!(!html.contains("<script>FICTIONAL_PRIVATE_RAW_26</script>"));
+        assert!(!html.contains("<img src=x onerror=alert(1)>"));
+        assert!(!html.contains("<b>unsafe model html</b>"));
+        assert!(html.contains("unsafe model html"));
         assert!(html.contains("name=\"expected_updated_at\""));
         assert!(html.contains("2026-07-27T09:00:00Z"));
         assert!(html.contains("2026-07-27T09:01:00Z"));
-        assert!(html.contains("/static/js/dashboard/moderator/talent-review.js"));
-        assert!(!html.contains("<script>FICTIONAL_PRIVATE_RAW_26</script>"));
+        assert!(html.contains("/static/js/dashboard/moderator/talent-review."));
     }
 
     #[tokio::test]

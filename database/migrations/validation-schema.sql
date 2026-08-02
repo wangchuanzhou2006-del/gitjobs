@@ -774,4 +774,3 @@ create table talent_source_seen_items (
     unique (subscription_id, content_fingerprint)
 );
 
-
