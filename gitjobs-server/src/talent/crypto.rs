@@ -157,6 +157,7 @@ pub(crate) fn normalize_contact(contact_type: ContactType, value: &str) -> Strin
 }
 
 /// Creates a stable, type-separated HMAC-SHA256 contact hash.
+#[allow(clippy::format_collect)]
 pub(crate) fn contact_hash(crypto: &TalentCrypto, contact: &ContactCandidate) -> Result<String, CryptoError> {
     let key = PKey::hmac(&crypto.contact_pepper).map_err(|_| CryptoError::ContactHashFailed)?;
     let mut signer =

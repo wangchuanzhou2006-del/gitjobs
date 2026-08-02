@@ -49,7 +49,7 @@ pub(crate) async fn page(
             match record.kind {
                 crate::talent::TalentKind::Hiring => hiring.push(public_record(record, TalentMode::Hiring)),
                 crate::talent::TalentKind::Seeking => {
-                    seeking.push(public_record(record, TalentMode::Seeking))
+                    seeking.push(public_record(record, TalentMode::Seeking));
                 }
                 crate::talent::TalentKind::Irrelevant | crate::talent::TalentKind::Uncertain => {}
             }

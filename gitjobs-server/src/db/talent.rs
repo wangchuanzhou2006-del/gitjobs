@@ -1867,7 +1867,7 @@ const fn risk_level_name(risk: RiskLevel) -> &'static str {
 }
 
 fn hex_decode(encoded: &str) -> Result<Vec<u8>> {
-    if encoded.len() % 2 != 0 {
+    if !encoded.len().is_multiple_of(2) {
         bail!("encrypted talent import item has invalid encoding");
     }
     encoded
@@ -1958,9 +1958,9 @@ mod tests {
                 })
                 .collect(),
         ] {
-            let error = NewTalentImportWire::try_from(&new_import(items))
-                .err()
-                .expect("out-of-range import should be rejected");
+            let Err(error) = NewTalentImportWire::try_from(&new_import(items)) else {
+                panic!("out-of-range import should be rejected");
+            };
 
             assert_eq!(
                 error.to_string(),

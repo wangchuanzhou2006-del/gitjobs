@@ -435,6 +435,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn completion_for(extraction: TalentExtraction) -> String {
         serde_json::json!({"choices": [{"message": {"content": serde_json::to_string(&extraction).unwrap()}}]}).to_string()
     }

@@ -6,6 +6,7 @@ pub(crate) mod talent;
 
 /// Shared active-state flags for the moderator navigation.
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Menu {
     pub live_jobs: bool,
     pub pending_jobs: bool,

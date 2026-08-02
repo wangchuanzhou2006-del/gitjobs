@@ -250,7 +250,7 @@ fn is_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     let (month, day) = match bytes.len() {
         5 if matches!(bytes[2], b'-' | b'/') => (decimal(&bytes[0..2]), decimal(&bytes[3..5])),
-        10 if bytes[0..4].iter().all(|byte| byte.is_ascii_digit())
+        10 if bytes[0..4].iter().all(u8::is_ascii_digit)
             && ((bytes[4] == b'-' && bytes[7] == b'-') || (bytes[4] == b'/' && bytes[7] == b'/')) =>
         {
             (decimal(&bytes[5..7]), decimal(&bytes[8..10]))

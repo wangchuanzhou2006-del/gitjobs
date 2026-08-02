@@ -8,6 +8,7 @@ use crate::{
     validation::{MAX_ITEMS, MAX_LEN_ENTITY_NAME, MAX_LEN_M, MAX_LEN_TAG},
 };
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const MODEL_RISK_ALLOWLIST_VERSION: &str = "talent-model-risk-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub(crate) fn validate_model_extraction(
     let contacts = extraction.contacts.clone();
     match serde_json::to_value(&extraction) {
         Ok(value) => {
-            collect_unsafe_model_strings(&value, "model_output", source_fragment, &contacts, &mut issues)
+            collect_unsafe_model_strings(&value, "model_output", source_fragment, &contacts, &mut issues);
         }
         Err(_) => issue(&mut issues, "invalid_model_output", "model_output"),
     }

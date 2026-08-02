@@ -43,6 +43,11 @@ impl std::fmt::Debug for DuplicateProbe {
 pub(crate) struct DuplicateService;
 
 impl DuplicateService {
+    #[allow(
+        clippy::needless_pass_by_value,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::unused_self
+    )]
     pub(crate) fn evaluate(
         &self,
         probe: DuplicateProbe,
@@ -63,6 +68,7 @@ impl DuplicateService {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn evaluate_candidate(probe: &DuplicateProbe, candidate: TalentDuplicateCandidate) -> DuplicateCandidate {
     let exact_reason = candidate
         .reasons
@@ -140,6 +146,7 @@ fn salary_overlaps(left: &TalentExtraction, right: &TalentDuplicateCandidate) ->
     left_minimum <= right_maximum && right_minimum <= left_maximum
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn text_similarity(left: &str, right: &str) -> f32 {
     let left = tokens(left);
     let right = tokens(right);
@@ -175,6 +182,7 @@ pub(crate) fn duplicate_normalized_text(extraction: &TalentExtraction) -> String
         .join(" ")
 }
 
+#[allow(clippy::format_collect)]
 pub(crate) fn extraction_fingerprint(extraction: &TalentExtraction) -> Option<String> {
     let normalized = extraction
         .title
@@ -263,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn exact_contact_and_fingerprint_markers_always_score_one() {
         let source_id = Uuid::from_u128(8);
         let probe = DuplicateProbe::new(
@@ -284,7 +293,7 @@ mod tests {
             ),
         ];
 
-        let matches = DuplicateService::default().evaluate(probe, candidates);
+        let matches = DuplicateService.evaluate(probe, candidates);
 
         assert_eq!(matches.len(), 2);
         assert!(matches.iter().all(|candidate| candidate.score == 1.0));
@@ -305,7 +314,7 @@ mod tests {
             "unrelated",
         );
 
-        let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
+        let matches = DuplicateService.evaluate(probe, vec![candidate]);
 
         assert_eq!(matches.len(), 1);
         assert!((matches[0].score - 0.60).abs() < f32::EPSILON);
@@ -328,7 +337,7 @@ mod tests {
             "beta CHEF west north",
         );
 
-        let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
+        let matches = DuplicateService.evaluate(probe, vec![candidate]);
 
         assert!((matches[0].score - 0.85).abs() < f32::EPSILON);
         assert!(matches[0].high_similarity);
@@ -347,7 +356,7 @@ mod tests {
             "same normalized text waiter beta south",
         );
 
-        let matches = DuplicateService::default().evaluate(probe, vec![candidate]);
+        let matches = DuplicateService.evaluate(probe, vec![candidate]);
 
         assert!((matches[0].score - 0.35).abs() < f32::EPSILON);
         assert_eq!(
@@ -371,7 +380,7 @@ mod tests {
             "private candidate title chef alpha city other",
         );
 
-        let matches = DuplicateService::default().evaluate(probe, vec![row]);
+        let matches = DuplicateService.evaluate(probe, vec![row]);
 
         assert_eq!(matches.len(), 1);
         assert_eq!(

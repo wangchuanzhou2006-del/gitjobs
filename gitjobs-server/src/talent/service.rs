@@ -477,6 +477,7 @@ impl ReviewService {
         .await
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn publish(
         &self,
         item_id: Uuid,
@@ -783,7 +784,7 @@ impl fmt::Debug for PrivateReviewDetail {
             .debug_struct("PrivateReviewDetail")
             .field("item", &self.item)
             .field("raw_fragment", &"[REDACTED]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -1162,6 +1163,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn manual_publish_rechecks_policy_and_audits_fixed_override_reasons() {
         let item_id = Uuid::new_v4();
         let actor_id = Uuid::new_v4();

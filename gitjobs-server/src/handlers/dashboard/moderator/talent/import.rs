@@ -180,8 +180,7 @@ async fn render_page(
         batches,
         errors,
         source_type: input
-            .map(|value| source_type_value(value.source_type))
-            .unwrap_or("wechat_group")
+            .map_or("wechat_group", |value| source_type_value(value.source_type))
             .to_owned(),
         source_name: input
             .map(|value| value.source_name.trim())
@@ -258,6 +257,19 @@ mod tests {
     const RAW_TEXT_SENTINEL: &str = "FICTIONAL_RAW_TEXT_SENTINEL_9D2F";
     const SAFE_SUCCESS_MESSAGE: &str = "已收到 1 条信息，正在整理。";
 
+    fn assert_hashed_js_asset(html: &str, stem: &str) {
+        let asset = html
+            .split('"')
+            .find(|value| value.starts_with(stem))
+            .expect("hashed JavaScript asset should be rendered");
+        let hash = asset
+            .strip_prefix(stem)
+            .and_then(|value| value.strip_suffix(".js"))
+            .expect("asset should retain its JavaScript suffix");
+        assert!(!hash.is_empty());
+        assert!(hash.chars().all(|character| character.is_ascii_alphanumeric()));
+    }
+
     fn user_session(db: &mut MockDB, is_moderator: bool) -> (session::Id, Uuid) {
         let auth_hash = "hash";
         let session_id = session::Id::default();
@@ -297,6 +309,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            response.headers()["location"],
+            "/log-in?next_url=%2Fdashboard%2Fmoderator%2Ftalent%2Fimport"
+        );
     }
 
     #[tokio::test]
@@ -342,6 +358,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            response.headers()["location"],
+            "/log-in?next_url=%2Fdashboard%2Fmoderator%2Ftalent%2Fimport"
+        );
+        let body =
+            String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(!body.contains(RAW_TEXT_SENTINEL));
     }
 
     #[tokio::test]
@@ -404,7 +427,7 @@ mod tests {
         assert!(html.contains(r#"aria-describedby="talent-raw-limit""#));
         assert!(html.contains("最多 200,000 字节"));
         assert!(html.contains(">开始 AI 整理</button>"));
-        assert!(html.contains("/static/js/dashboard/moderator/talent-import."));
+        assert_hashed_js_asset(&html, "/static/js/dashboard/moderator/talent-import.");
         assert!(html.contains("sticky bottom-0"));
     }
 

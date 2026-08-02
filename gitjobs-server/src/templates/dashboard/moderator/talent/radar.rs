@@ -36,6 +36,7 @@ pub(crate) struct RadarSource {
 pub(crate) struct RadarEditPage {
     pub cfg: Config,
     pub page_id: PageId,
+    #[allow(dead_code)]
     pub messages: Vec<Message>,
     pub user: User,
     pub auth_provider: Option<String>,

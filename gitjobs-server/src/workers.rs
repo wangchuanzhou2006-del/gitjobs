@@ -15,8 +15,8 @@ use crate::{
 
 const TALENT_MAX_CONCURRENCY: usize = 4;
 const TALENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const TALENT_CLEANUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-const TALENT_SOURCE_POLL_INTERVAL: Duration = Duration::from_secs(60);
+const TALENT_CLEANUP_INTERVAL: Duration = Duration::from_hours(24);
+const TALENT_SOURCE_POLL_INTERVAL: Duration = Duration::from_mins(1);
 const PRIVACY_SAFE_PANIC_MESSAGE: &str = "background task panicked";
 
 /// Replaces the default payload-printing hook before any background work starts.
@@ -37,6 +37,7 @@ impl TalentItemProcessor for crate::talent::TalentProcessor {
 }
 
 /// Launches all background workers.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn run(
     db: DynDB,
     talent: Arc<TalentServices>,
@@ -64,14 +65,15 @@ pub(crate) fn run(
             talent_processor_worker(processor, processor_cancellation).await;
         });
         if source_updates_enabled {
-            match crate::talent::TalentSourceCollector::new(db, talent.import.clone(), allowed_public_hosts) {
-                Ok(collector) => {
-                    let source_cancellation = cancellation_token;
-                    task_tracker.spawn(async move {
-                        talent_source_worker(collector, source_cancellation).await;
-                    });
-                }
-                Err(_) => error!("talent source collector configuration failed"),
+            if let Ok(collector) =
+                crate::talent::TalentSourceCollector::new(db, talent.import.clone(), allowed_public_hosts)
+            {
+                let source_cancellation = cancellation_token;
+                task_tracker.spawn(async move {
+                    talent_source_worker(collector, source_cancellation).await;
+                });
+            } else {
+                error!("talent source collector configuration failed");
             }
         }
     }
@@ -159,11 +161,10 @@ where
                 }
                 result = tasks.join_next() => {
                     match result {
-                        Some(Ok(Ok(crate::talent::ProcessOutcome::NoWork))) => {}
+                        Some(Ok(Ok(crate::talent::ProcessOutcome::NoWork))) | None => {}
                         Some(Ok(Ok(_))) => found_work = true,
                         Some(Ok(Err(error))) => error!(%error, "talent item processing failed"),
                         Some(Err(_)) => error!("talent item processing task panicked"),
-                        None => {}
                     }
                 }
             }

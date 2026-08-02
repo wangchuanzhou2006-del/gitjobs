@@ -43,6 +43,11 @@ pub(crate) struct RiskAssessment {
 pub(crate) struct RiskEngine;
 
 impl RiskEngine {
+    #[allow(
+        clippy::too_many_lines,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::unused_self
+    )]
     pub(crate) fn evaluate(&self, input: RiskInput) -> RiskAssessment {
         let mut score = 0_u16;
         let mut reasons = Vec::new();
@@ -211,6 +216,7 @@ pub(crate) struct AutoPublishDecision {
 pub(crate) struct AutoPublishPolicy;
 
 impl AutoPublishPolicy {
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unused_self)]
     pub(crate) fn decide(&self, input: AutoPublishInput) -> AutoPublishDecision {
         let mut reasons = Vec::new();
         if !input.global_enabled {
@@ -419,10 +425,10 @@ mod tests {
         model_rule_conflict: bool,
         duplicates: Vec<DuplicateCandidate>,
     ) -> RiskAssessment {
-        RiskEngine::default().evaluate(RiskInput {
+        RiskEngine.evaluate(RiskInput {
             extraction,
             source_trust,
-            rule_hints: RuleEngine::default().analyze(fragment),
+            rule_hints: RuleEngine.analyze(fragment),
             duplicates,
             identity_anomaly,
             model_rule_conflict,
@@ -619,7 +625,7 @@ mod tests {
             vec![duplicate(0.85)],
         );
 
-        let decision = AutoPublishPolicy::default().decide(AutoPublishInput {
+        let decision = AutoPublishPolicy.decide(AutoPublishInput {
             global_enabled: false,
             source_trust: SourceTrust::Blocked,
             source_enabled: false,
@@ -675,7 +681,7 @@ mod tests {
             } else {
                 complete_hiring(0.95)
             };
-            let decision = AutoPublishPolicy::default().decide(AutoPublishInput {
+            let decision = AutoPublishPolicy.decide(AutoPublishInput {
                 global_enabled: true,
                 source_trust: SourceTrust::Trusted,
                 source_enabled: true,
@@ -707,7 +713,7 @@ mod tests {
             false,
             vec![],
         );
-        let decision = AutoPublishPolicy::default().decide(AutoPublishInput {
+        let decision = AutoPublishPolicy.decide(AutoPublishInput {
             global_enabled: true,
             source_trust: SourceTrust::Trusted,
             source_enabled: true,
@@ -723,7 +729,7 @@ mod tests {
     fn global_and_source_pauses_are_independent() {
         let extraction = complete_hiring(0.95);
         let assessment = low_risk();
-        let decision = AutoPublishPolicy::default().decide(AutoPublishInput {
+        let decision = AutoPublishPolicy.decide(AutoPublishInput {
             global_enabled: false,
             source_trust: SourceTrust::Trusted,
             source_enabled: false,
@@ -753,7 +759,7 @@ mod tests {
                 false,
                 vec![],
             );
-            let decision = AutoPublishPolicy::default().decide(AutoPublishInput {
+            let decision = AutoPublishPolicy.decide(AutoPublishInput {
                 global_enabled: true,
                 source_trust: SourceTrust::Trusted,
                 source_enabled: true,

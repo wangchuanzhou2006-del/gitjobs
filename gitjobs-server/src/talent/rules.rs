@@ -58,6 +58,7 @@ impl RuleHints {
 pub(crate) struct RuleEngine;
 
 impl RuleEngine {
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unused_self)]
     pub(crate) fn analyze(&self, fragment: &str) -> RuleHints {
         let mut hints = RuleHints::default();
         add_kind_evidence(
@@ -168,6 +169,7 @@ fn salary_candidates(fragment: &str) -> Vec<SalaryCandidate> {
         .collect()
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn parse_salary(value: &str, unit: &str) -> Option<u32> {
     let value = value.parse::<f64>().ok()?;
     let multiplier = if unit.is_empty() { 1.0 } else { 1_000.0 };
@@ -262,8 +264,8 @@ mod tests {
 
     #[test]
     fn explicit_keywords_classify_hiring_and_seeking_fragments() {
-        let hiring = RuleEngine::default().analyze("招聘后厨切配，月薪6000-8000元");
-        let seeking = RuleEngine::default().analyze("求职服务员，希望在测试市工作");
+        let hiring = RuleEngine.analyze("招聘后厨切配，月薪6000-8000元");
+        let seeking = RuleEngine.analyze("求职服务员，希望在测试市工作");
 
         assert_eq!(hiring.kind_hint, Some(TalentKind::Hiring));
         assert_eq!(seeking.kind_hint, Some(TalentKind::Seeking));
@@ -273,8 +275,8 @@ mod tests {
 
     #[test]
     fn ambiguous_or_implicit_language_is_not_classified() {
-        let ambiguous = RuleEngine::default().analyze("招聘求职信息交流");
-        let implicit = RuleEngine::default().analyze("后厨切配，随时到岗");
+        let ambiguous = RuleEngine.analyze("招聘求职信息交流");
+        let implicit = RuleEngine.analyze("后厨切配，随时到岗");
 
         assert_eq!(ambiguous.kind_hint, None);
         assert_eq!(implicit.kind_hint, None);
@@ -285,7 +287,7 @@ mod tests {
     #[test]
     fn salary_ranges_and_anchored_contacts_have_offsets_but_no_raw_evidence() {
         let fragment = "招聘厨师，月薪 6k-8k；电话：13800138000；微信：cook_2026";
-        let hints = RuleEngine::default().analyze(fragment);
+        let hints = RuleEngine.analyze(fragment);
 
         assert_eq!(hints.salary_candidates.len(), 1);
         assert_eq!(hints.salary_candidates[0].minimum, 6_000);
@@ -311,8 +313,7 @@ mod tests {
 
     #[test]
     fn timestamps_and_unlabelled_identifiers_are_not_salary_or_wechat_candidates() {
-        let hints =
-            RuleEngine::default().analyze("发布于 10:30:45，编号 13800138000，账号 candidate_2026，招聘店员");
+        let hints = RuleEngine.analyze("发布于 10:30:45，编号 13800138000，账号 candidate_2026，招聘店员");
 
         assert!(hints.salary_candidates.is_empty());
         assert!(hints.contact_candidates.is_empty());
@@ -325,7 +326,7 @@ mod tests {
             ("招聘厨师，月薪6k-8000", (6_000, 8_000)),
             ("招聘厨师，月薪6-8k", (6_000, 8_000)),
         ] {
-            let hints = RuleEngine::default().analyze(fragment);
+            let hints = RuleEngine.analyze(fragment);
 
             assert_eq!(hints.salary_candidates.len(), 1, "{fragment}");
             assert_eq!(
@@ -341,7 +342,7 @@ mod tests {
 
     #[test]
     fn short_wechat_identifiers_use_canonical_non_revealing_masking() {
-        let hints = RuleEngine::default().analyze("招聘店员，微信：abc123");
+        let hints = RuleEngine.analyze("招聘店员，微信：abc123");
         let contact = &hints.contact_candidates[0];
 
         assert_eq!(contact.masked_value, "***");
@@ -352,8 +353,7 @@ mod tests {
 
     #[test]
     fn hard_risk_keywords_are_emitted_before_model_analysis() {
-        let hints =
-            RuleEngine::default().analyze("招聘兼职，先缴纳报名费；工作内容是刷单；发布者自称可冒充门店招聘");
+        let hints = RuleEngine.analyze("招聘兼职，先缴纳报名费；工作内容是刷单；发布者自称可冒充门店招聘");
         let codes = hints
             .risk_candidates
             .iter()

@@ -27,6 +27,7 @@ pub(crate) struct QueuePage {
 #[derive(Debug, Clone)]
 pub(crate) struct QueueItem {
     pub item_id: Uuid,
+    #[allow(dead_code)]
     pub source_id: Uuid,
     pub kind_label: String,
     pub title: String,
@@ -75,6 +76,7 @@ pub(crate) struct DetailItem {
     pub salary: String,
     pub confidence_label: String,
     pub risk_label: String,
+    #[allow(dead_code)]
     pub source_name: String,
     pub status_label: String,
     pub contact_label: String,

@@ -76,24 +76,18 @@ impl TalentProcessor {
         else {
             return Ok(ProcessOutcome::NoWork);
         };
-        let fragment = match self.decrypt_fragment(&claimed) {
-            Some(fragment) => fragment,
-            None => {
-                self.fail_safely(&claimed, "decrypt_failed").await?;
-                return Ok(ProcessOutcome::Failed);
-            }
+        let Some(fragment) = self.decrypt_fragment(&claimed) else {
+            self.fail_safely(&claimed, "decrypt_failed").await?;
+            return Ok(ProcessOutcome::Failed);
         };
-        let metadata = match self
+        let Some(metadata) = self
             .db
             .get_talent_review_item(claimed.item_id)
             .await
             .map_err(|_| ProcessError::Persistence)?
-        {
-            Some(item) => item,
-            None => {
-                self.fail_safely(&claimed, "item_metadata_missing").await?;
-                return Ok(ProcessOutcome::Failed);
-            }
+        else {
+            self.fail_safely(&claimed, "item_metadata_missing").await?;
+            return Ok(ProcessOutcome::Failed);
         };
         let hints = self.rules.analyze(&fragment);
         let extraction = match self.extract_with_one_timeout_retry(fragment.clone()).await {
@@ -319,6 +313,7 @@ fn invalid_extraction(_extraction: TalentExtraction, issues: Vec<ValidationIssue
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn ai_error_code(error: AiError) -> &'static str {
     match error {
         AiError::Timeout => "ai_timeout",
@@ -330,6 +325,7 @@ fn ai_error_code(error: AiError) -> &'static str {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn map_review_error(error: ReviewError) -> ProcessError {
     match error {
         ReviewError::ProtectedData => ProcessError::ProtectedData,

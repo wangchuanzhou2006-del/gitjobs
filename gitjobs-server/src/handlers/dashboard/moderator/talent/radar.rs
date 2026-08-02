@@ -59,6 +59,7 @@ pub(crate) async fn page(
     render(auth_session, messages, session, cfg, db, Vec::new()).await
 }
 
+#[allow(clippy::manual_let_else)]
 pub(crate) async fn create(
     auth_session: AuthSession,
     messages: Messages,

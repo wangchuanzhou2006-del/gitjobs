@@ -190,7 +190,7 @@ impl TalentSourceCollector {
                 outcome.duplicates += 1;
                 continue;
             }
-            match self
+            if self
                 .import
                 .create_batch(
                     actor,
@@ -201,15 +201,15 @@ impl TalentSourceCollector {
                     },
                 )
                 .await
+                .is_ok()
             {
-                Ok(_) => outcome.accepted += 1,
-                Err(_) => {
-                    outcome.failed += 1;
-                    self.db
-                        .release_talent_source_item(source.subscription_id, &entry.id, &fingerprint)
-                        .await
-                        .map_err(|_| SourceCollectError::Persistence)?;
-                }
+                outcome.accepted += 1;
+            } else {
+                outcome.failed += 1;
+                self.db
+                    .release_talent_source_item(source.subscription_id, &entry.id, &fingerprint)
+                    .await
+                    .map_err(|_| SourceCollectError::Persistence)?;
             }
         }
         Ok(outcome)
@@ -258,6 +258,7 @@ fn matches_keywords(text: &str, keywords: &[String]) -> bool {
     keywords.iter().any(|keyword| normalized.contains(keyword))
 }
 
+#[allow(clippy::format_collect)]
 fn content_fingerprint(text: &str) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     Sha256::digest(normalized.as_bytes())

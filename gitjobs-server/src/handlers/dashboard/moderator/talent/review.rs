@@ -234,6 +234,7 @@ pub(crate) async fn save(
 }
 
 #[instrument(skip_all, err)]
+#[allow(clippy::manual_let_else)]
 pub(crate) async fn merge(
     auth_session: AuthSession,
     State(talent): State<Arc<TalentServices>>,
@@ -419,6 +420,7 @@ pub(crate) async fn reprocess(
     ))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn action_outcome(
     outcome: SaveReviewOutcome,
     headers: &HeaderMap,
@@ -780,6 +782,7 @@ fn validation_error(stage: &'static str, next_action: &'static str) -> Response 
         .into_response()
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn stage_error(error: ReviewError, stage: &'static str, item_id: Uuid) -> Response {
     match error {
         ReviewError::Conflict => conflict_response(item_id),
@@ -801,6 +804,7 @@ fn stage_error(error: ReviewError, stage: &'static str, item_id: Uuid) -> Respon
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn merge_stage_error(error: ReviewError, item_id: Uuid) -> Response {
     match error {
         ReviewError::Conflict => conflict_response(item_id),
@@ -857,6 +861,19 @@ mod tests {
         QueueQuery, RefreshDestination, action_success, queue_filter, queue_item, safe_evidence,
         safe_risk_text,
     };
+
+    fn assert_hashed_js_asset(html: &str, stem: &str) {
+        let asset = html
+            .split('"')
+            .find(|value| value.starts_with(stem))
+            .expect("hashed JavaScript asset should be rendered");
+        let hash = asset
+            .strip_prefix(stem)
+            .and_then(|value| value.strip_suffix(".js"))
+            .expect("asset should retain its JavaScript suffix");
+        assert!(!hash.is_empty());
+        assert!(hash.chars().all(|character| character.is_ascii_alphanumeric()));
+    }
 
     fn user_session(db: &mut MockDB, moderator: bool) -> (session::Id, Uuid) {
         user_session_times(db, moderator, 1)
@@ -1073,8 +1090,10 @@ mod tests {
                 ))
                 .unwrap(),
         ] {
+            let expected_location = format!("/log-in?next_url={}", request.uri().path().replace('/', "%2F"));
             let response = router.clone().oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+            assert_eq!(response.headers()["location"], expected_location);
             let body = String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec())
                 .unwrap();
             assert!(!body.contains(raw));
@@ -1232,7 +1251,7 @@ mod tests {
         assert!(html.contains("name=\"expected_updated_at\""));
         assert!(html.contains("2026-07-27T09:00:00Z"));
         assert!(html.contains("2026-07-27T09:01:00Z"));
-        assert!(html.contains("/static/js/dashboard/moderator/talent-review."));
+        assert_hashed_js_asset(&html, "/static/js/dashboard/moderator/talent-review.");
     }
 
     #[tokio::test]
@@ -1450,6 +1469,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn reprocess_withdraw_pause_and_source_status_use_the_expected_safe_database_contracts() {
         let item_id = Uuid::new_v4();
         let record_id = Uuid::new_v4();
