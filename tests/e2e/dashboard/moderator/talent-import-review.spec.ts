@@ -249,14 +249,13 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
 
     await openItem(page, workflow.newItemId);
     const before = Number(await page.locator('input[name="lock_version"]').first().inputValue());
+    const queueNavigation = page.waitForURL("/dashboard/moderator/talent/review");
     await page.getByRole("button", { name: "重新整理" }).click();
-    await expect
-      .poll(async () => {
-        await page.goto(`/dashboard/moderator/talent/review/${workflow.newItemId}`);
-        return Number(await page.locator('input[name="lock_version"]').first().inputValue());
-      })
-      .toBeGreaterThan(before);
-    await expect(page.getByText("待查看", { exact: true })).toBeVisible();
+    await queueNavigation;
+    await openItem(page, workflow.newItemId);
+    const after = Number(await page.locator('input[name="lock_version"]').first().inputValue());
+    expect(after).toBeGreaterThan(before);
+    await expect(page.locator("#dashboard-content").getByText("待查看", { exact: true })).toBeVisible();
     const publicProjection = await readPublicProjection(page);
     expectTitlesAbsentFromPublicProjection(publicProjection, [
       ...SEEDED_REVIEW_ONLY_TITLES,

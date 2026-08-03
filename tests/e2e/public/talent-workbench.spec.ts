@@ -105,8 +105,8 @@ test.describe("餐饮人才工作台", () => {
     const errors = captureBrowserErrors(page);
     await navigateWithRetries(page, "/talent", "talent workbench without JavaScript");
 
-    expect(await page.locator('[data-talent-card][data-talent-mode="hiring"]:visible').count()).toBeGreaterThan(0);
-    expect(await page.locator('[data-talent-card][data-talent-mode="seeking"]:visible').count()).toBeGreaterThan(0);
+    await expect(page.locator('[data-talent-card][data-talent-mode="hiring"]').first()).toBeVisible();
+    await expect(page.locator('[data-talent-card][data-talent-mode="seeking"]').first()).toBeVisible();
     await expect(page.getByRole("note")).toHaveCount(0);
     await expect(page.locator(".talent-results > header")).toContainText("经过确认后发布");
     await expect(page.getByRole("link", { name: "机会" }).first()).toHaveAttribute("href", "/opportunities");
