@@ -203,7 +203,7 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     const expectedTitles = Object.values(fixture.titles).slice(0, 5);
     await waitForBatchTitles(page, batchId, expectedTitles);
 
-    await expect(page.locator("ol > li")).toHaveCount(5);
+    await expect(page.locator('ol > li:has(a[href^="/dashboard/moderator/talent/review/"])')).toHaveCount(5);
     await expect(rowFor(page, fixture.titles.safeHiring)).toContainText("已发布");
     await expect(rowFor(page, fixture.titles.safeSeeking)).toContainText("已发布");
     await expect(rowFor(page, fixture.titles.mediumFee)).toContainText("待查看");
