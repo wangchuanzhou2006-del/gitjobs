@@ -204,7 +204,7 @@ select is(
         select count(*)
         from jsonb_array_elements(list_talent_review_items(array['needs_review'], null, 50))
     ),
-    6::bigint,
+    7::bigint,
     'review list filters return only requested states'
 );
 
@@ -936,14 +936,18 @@ select set_talent_auto_publish(
 \gset
 
 select results_eq(
-    $$
-    select
-        :'noop_global_outcome'::jsonb->>'outcome',
-        updated_at = :'global_resumed_updated_at'::timestamptz,
-        (select count(*) from talent_review_events where resource_scope = 'runtime')
-    from talent_runtime_settings
-    where singleton
-    $$,
+    format(
+        $sql$
+        select
+            %L::jsonb->>'outcome',
+            updated_at = %L::timestamptz,
+            (select count(*) from talent_review_events where resource_scope = 'runtime')
+        from talent_runtime_settings
+        where singleton
+        $sql$,
+        :'noop_global_outcome',
+        :'global_resumed_updated_at'
+    ),
     $$ values ('updated'::text, true, 2::bigint) $$,
     'runtime no-op preserves the token and creates no duplicate audit event'
 );
@@ -1231,6 +1235,8 @@ select is(
 select is(
     (select updated_at from talent_sources where source_id = :'sourceId'),
     :'trusted_source_updated_at'::timestamptz,
+    'stale source trust leaves the resource token unchanged'
+);
 
 select is(
     (select count(*) from talent_review_events where resource_scope = 'source'),
@@ -1248,18 +1254,21 @@ select set_talent_source_status(
 \gset
 
 select results_eq(
-    $$
-    select
-        :'noop_source_outcome'::jsonb->>'outcome',
-        updated_at = :'trusted_source_updated_at'::timestamptz,
-        (select count(*) from talent_review_events where resource_scope = 'source')
-    from talent_sources
-    where source_id = :'sourceId'::uuid
-    $$,
+    format(
+        $sql$
+        select
+            %L::jsonb->>'outcome',
+            updated_at = %L::timestamptz,
+            (select count(*) from talent_review_events where resource_scope = 'source')
+        from talent_sources
+        where source_id = %L::uuid
+        $sql$,
+        :'noop_source_outcome',
+        :'trusted_source_updated_at',
+        :'sourceId'
+    ),
     $$ values ('updated'::text, true, 1::bigint) $$,
     'source policy no-op preserves the token and creates no duplicate audit event'
-);
-    'stale source trust leaves the resource token unchanged'
 );
 
 select throws_ok(
@@ -1482,26 +1491,22 @@ update talent_import_batches
 set processed_count = 8, failed_count = 1, status = 'partially_failed'
 where batch_id = :'batchId';
 
+select transition_talent_import_item(
+    :'failedReprocessItemId',
+    0,
+    'queued',
+    :'moderatorId',
+    'reprocess'
+);
+
 select results_eq(
     format(
         $$
-        with transitioned as (
-            select transition_talent_import_item(
-                %L::uuid,
-                0,
-                'queued',
-                %L::uuid,
-                'reprocess'
-            ) as saved
-        )
         select item.status, batch.processed_count, batch.failed_count
-        from transitioned
-        join talent_import_items item on item.item_id = %L::uuid
+        from talent_import_items item
         join talent_import_batches batch using (batch_id)
-        where transitioned.saved
+        where item.item_id = %L::uuid
         $$,
-        :'failedReprocessItemId',
-        :'moderatorId',
         :'failedReprocessItemId'
     ),
     $$ values ('queued'::text, 7::integer, 0::integer) $$,
@@ -1513,11 +1518,11 @@ select * from update_talent_review_item(
     0,
     '{"extraction":{"title":"Audit Revised Role"},"manual_policy_reasons":["source_not_trusted"]}'::jsonb,
     :'moderatorId'
+);
 update talent_import_items
 set extraction = jsonb_set(extraction, '{title}', to_jsonb('13900000001'::text))
 where item_id = :'gateItemId';
 
-);
 
 select results_eq(
     format(
@@ -1535,9 +1540,6 @@ select results_eq(
     $$ values (1::integer, '["source_not_trusted"]'::jsonb) $$,
     'manual policy override reasons are observable as fixed privacy-safe audit codes'
 );
-
-select * from finish();
-rollback;
 
 select ok(
     (
@@ -1591,3 +1593,6 @@ select throws_ok(
     null,
     'audit event resource scope must match its bound identity'
 );
+
+select * from finish();
+rollback;

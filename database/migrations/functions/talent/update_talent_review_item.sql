@@ -338,10 +338,10 @@ begin
 
     select *
     into v_before
-    from talent_import_items
-    where item_id = p_item_id
-      and lock_version = p_lock_version
-      and status = 'needs_review'
+    from talent_import_items as current_item
+    where current_item.item_id = p_item_id
+      and current_item.lock_version = p_lock_version
+      and current_item.status = 'needs_review'
     for update;
 
     if not found then

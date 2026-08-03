@@ -14,7 +14,7 @@ values (
 
 select results_eq(
     $$
-    select table_name, data_type
+    select table_name::text collate "C", data_type::text collate "C"
     from information_schema.columns
     where table_schema = current_schema()
       and table_name in ('talent_import_batches', 'talent_import_items', 'talent_contacts')
@@ -23,9 +23,9 @@ select results_eq(
     $$,
     $$
     values
-        ('talent_contacts'::text, 'bigint'::text),
-        ('talent_import_batches'::text, 'bigint'::text),
-        ('talent_import_items'::text, 'bigint'::text)
+        ('talent_contacts'::text collate "C", 'bigint'::text collate "C"),
+        ('talent_import_batches'::text collate "C", 'bigint'::text collate "C"),
+        ('talent_import_items'::text collate "C", 'bigint'::text collate "C")
     $$,
     'talent encryption key versions store the complete positive u32 range'
 );
@@ -638,6 +638,7 @@ select results_eq(
     $$,
     $$ values ('partially_failed'::text, 2, 1) $$,
     'one item failure produces a partially failed completed batch'
+);
 
 select results_eq(
     format(
@@ -654,7 +655,6 @@ select results_eq(
     $$ values ('item'::text, 'processing_failed'::text, 'processor_failed'::text,
                'extracting'::text, 'failed'::text, 1::integer) $$,
     'failed processing writes a privacy-safe scoped audit event'
-);
 );
 
 select throws_ok(

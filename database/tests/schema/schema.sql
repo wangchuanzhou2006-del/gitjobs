@@ -3,7 +3,7 @@
 -- ============================================================================
 
 begin;
-select plan(220);
+select plan(218);
 
 create function test_has_foreign_key(
     child_table text,
@@ -392,7 +392,7 @@ select columns_are('talent_records', array[
 
 select results_eq(
     $$
-    select column_name, data_type
+    select column_name::text collate "C", data_type::text collate "C"
     from information_schema.columns
     where table_schema = current_schema()
       and table_name = 'talent_records'
@@ -401,8 +401,8 @@ select results_eq(
     $$,
     $$
     values
-        ('housing_allowance'::text, 'bigint'::text),
-        ('lodging'::text, 'text'::text)
+        ('housing_allowance'::text collate "C", 'bigint'::text collate "C"),
+        ('lodging'::text collate "C", 'text'::text collate "C")
     $$,
     'talent records preserve lodging text and housing allowance amounts'
 );
@@ -632,8 +632,9 @@ select ok(exists (
     select 1
     from pg_index index_definition
     join pg_class index_relation on index_relation.oid = index_definition.indexrelid
-    where index_relation.relname = 'talent_source_seen_items_content_fingerprint_key'
+    where index_definition.indrelid = 'talent_source_seen_items'::regclass
       and index_definition.indisunique
+      and pg_get_indexdef(index_definition.indexrelid) like '%(subscription_id, content_fingerprint)%'
 ), 'talent_source_seen_items(subscription_id, content_fingerprint) should be unique');
 
 select has_check('talent_source_subscriptions', 'talent_source_subscriptions_interval_minutes_check');

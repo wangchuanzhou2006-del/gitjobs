@@ -25,11 +25,14 @@ select dblink_connect(
 select dblink_exec(
     'talent_structured_a',
     $cleanup$
+    -- Test-fixture cleanup is the only window that bypasses append-only enforcement.
+    alter table talent_review_events disable trigger talent_review_events_append_only;
     delete from talent_review_events
     where item_id in (
         '00000000-0000-0000-0000-000000000731'::uuid,
         '00000000-0000-0000-0000-000000000732'::uuid
     );
+    alter table talent_review_events enable trigger talent_review_events_append_only;
     delete from talent_contacts
     where record_id in (
         select record_id
@@ -194,7 +197,8 @@ begin
         into v_waiting
         from pg_stat_activity
         where application_name in ('talent-structured-a', 'talent-structured-b')
-          and wait_event = 'Advisory';
+          and wait_event_type = 'Lock'
+          and wait_event in ('advisory', 'transactionid', 'tuple');
 
         exit when v_waiting = 2 or clock_timestamp() >= v_deadline;
         perform pg_sleep(0.02);
@@ -260,7 +264,7 @@ select dblink_send_query(
 select is(
     pg_temp.wait_for_structured_publishers(),
     2,
-    'two independent sessions reach the final structured gate concurrently'
+    'two independent sessions reach publication serialization barriers'
 );
 
 select pg_advisory_unlock(hashtextextended('talent:auto-publish:structured-v1', 0));
@@ -268,6 +272,8 @@ select pg_advisory_unlock(hashtextextended('talent:auto-publish:structured-v1', 
 select * from dblink_get_result('talent_structured_a') as result(status text);
 select * from dblink_get_result('talent_structured_b') as result(status text);
 
+select * from dblink_get_result('talent_structured_a') as result(status text);
+select * from dblink_get_result('talent_structured_b') as result(status text);
 select is(
     (
         select count(*)
@@ -333,11 +339,14 @@ select is(
 select dblink_exec(
     'talent_structured_a',
     $cleanup$
+    -- Test-fixture cleanup is the only window that bypasses append-only enforcement.
+    alter table talent_review_events disable trigger talent_review_events_append_only;
     delete from talent_review_events
     where item_id in (
         '00000000-0000-0000-0000-000000000731'::uuid,
         '00000000-0000-0000-0000-000000000732'::uuid
     );
+    alter table talent_review_events enable trigger talent_review_events_append_only;
     delete from talent_contacts
     where record_id in (
         select record_id

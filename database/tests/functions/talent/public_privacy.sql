@@ -111,31 +111,31 @@ values (
     'fictionalCompleteWechat703'
 );
 
-select like(
+select alike(
     list_published_talent_records(null, 50)::text,
     '%+86****0001%',
     'public records include canonical international phone masking'
 );
 
-select like(
+select alike(
     list_published_talent_records(null, 50)::text,
     '%tes***_01%',
     'public records include canonical WeChat underscore masking'
 );
 
-select unlike(
+select unalike(
     list_published_talent_records(null, 50)::text,
     '%fictional_complete_contact_701%',
     'public records exclude complete contact and contact hash'
 );
 
-select unlike(
+select unalike(
     list_published_talent_records(null, 50)::text,
     '%636f6e74616374%',
     'public records exclude ciphertext'
 );
 
-select unlike(
+select unalike(
     list_published_talent_records(null, 50)::text,
     '%fictionalCompleteWechat703%',
     'public records fail closed around corrupt unmasked contact rows'

@@ -131,6 +131,7 @@ jobs:
               prototype_data: false
               ai:
                 base_url: "http://127.0.0.1:18081/v1"
+                allow_local_http: true
                 model: "e2e-deterministic-v1"
           EOF
 

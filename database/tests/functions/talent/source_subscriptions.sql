@@ -33,7 +33,7 @@ select upsert_talent_source_subscription(jsonb_build_object(
     'actor_user_id', '00000000-0000-0000-0000-000000000701'
 )) updated_subscription_id \gset
 
-select is(:'updated_subscription_id', :'subscription_id', 'upsert reuses the same source subscription');
+select is(:'updated_subscription_id'::uuid, :'subscription_id'::uuid, 'upsert reuses the same source subscription');
 select is((select count(*) from talent_source_subscriptions), 1::bigint, 'upsert creates no duplicate row');
 
 select upsert_talent_source_subscription(jsonb_build_object(
@@ -42,7 +42,7 @@ select upsert_talent_source_subscription(jsonb_build_object(
     'keywords', jsonb_build_array('chef'), 'interval_minutes', 1440,
     'actor_user_id', '00000000-0000-0000-0000-000000000701'
 )) edited_subscription_id \gset
-select is(:'edited_subscription_id', :'subscription_id', 'focused edit preserves the subscription identity');
+select is(:'edited_subscription_id'::uuid, :'subscription_id'::uuid, 'focused edit preserves the subscription identity');
 select is((select public_url from talent_source_subscriptions where subscription_id = :'subscription_id'), 'https://feeds.example.test/updated.xml', 'focused edit can change the public URL');
 select ok(reserve_talent_source_item(:'subscription_id', 'entry-1', repeat('a', 64)), 'first source item is reserved');
 select is(reserve_talent_source_item(:'subscription_id', 'entry-1', repeat('b', 64)), false, 'same source item ID is a duplicate');
