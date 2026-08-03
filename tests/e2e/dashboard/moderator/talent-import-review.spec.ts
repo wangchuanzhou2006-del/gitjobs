@@ -172,7 +172,7 @@ const batchInput = (token: string, phoneBase: number) =>
     `招聘 E2E_MEDIUM_FEE_${token}，费用信息需要人工核对，合成联系电话：${syntheticPhone(phoneBase + 2)}`,
     `招聘 E2E_HIGH_RISK_${token}，刷单内容必须人工驳回，合成联系电话：${syntheticPhone(phoneBase + 3)}`,
     `招聘 E2E_DUPLICATE_${token}，与正式种子记录高度相似，合成联系电话：${syntheticPhone(phoneBase + 4)}`,
-  ].join("\n\n");
+  ].join("\n\n\n");
 
 test.describe.serial("Moderator talent import and review acceptance", () => {
   test.beforeEach(async ({ page }) => {
