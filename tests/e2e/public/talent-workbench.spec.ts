@@ -37,6 +37,20 @@ type TalentDataset = { hiring: TalentRecord[]; seeking: TalentRecord[] };
 
 const readTalentDataset = async (page: Page): Promise<TalentDataset> =>
   page.locator("#talent-data").evaluate((node) => JSON.parse(node.textContent || ""));
+const matchingCommandFixture = async (page: Page) => {
+  const dataset = await readTalentDataset(page);
+  const record = dataset.hiring.find(
+    (candidate) =>
+      candidate.locationTerms.some((term) => term.trim()) &&
+      candidate.roles.some((role) => role.trim()),
+  );
+  expect(record).toBeTruthy();
+  return {
+    region: record!.locationTerms.find((term) => term.trim())!,
+    role: record!.roles.find((role) => role.trim())!,
+  };
+};
+
 
 const expectFormalSeedDataset = async (page: Page): Promise<TalentDataset> => {
   const dataset = await readTalentDataset(page);
@@ -256,15 +270,16 @@ test.describe("餐饮人才工作台", () => {
 
   test("支持移除条件、撤销和 Enter 提交", async ({ page }) => {
     const input = page.getByLabel("描述招聘或求职需求");
-    await input.fill("天津找切配，工资5000以上");
+    const { region, role } = await matchingCommandFixture(page);
+    await input.fill(`${region}找${role}，工资5000以上`);
     await input.press("Enter");
     await expect(page.locator("#talent-condition-chips button")).toHaveCount(3);
 
-    await page.getByRole("button", { name: "移除条件：天津" }).click();
+    await page.getByRole("button", { name: `移除条件：${region}` }).click();
     await expect(page.locator("#talent-condition-chips button")).toHaveCount(2);
     await page.getByRole("button", { name: "撤销条件更改" }).click();
     await expect(page.locator("#talent-condition-chips button")).toHaveCount(3);
-    await expect(page.locator("#talent-condition-chips")).toContainText("天津");
+    await expect(page.locator("#talent-condition-chips")).toContainText(region);
   });
 
   test("无结果与未识别指令通过同一实时状态说明", async ({ page }) => {
@@ -273,11 +288,15 @@ test.describe("餐饮人才工作台", () => {
     await page.getByRole("button", { name: "生成匹配" }).click();
     await expect(page.locator("#talent-status")).toContainText("没有匹配结果");
     await expect(page.locator("[data-talent-card]:visible")).toHaveCount(0);
+    const chips = page.locator("#talent-condition-chips button");
+    const previousConditions = await chips.allTextContents();
+    expect(previousConditions.length).toBeGreaterThan(0);
 
     await input.fill("请给我最合适的");
     await page.getByRole("button", { name: "生成匹配" }).click();
     await expect(input).toHaveValue("请给我最合适的");
-    await expect(page.locator("#talent-condition-chips button")).toHaveCount(3);
+    await expect(chips).toHaveCount(previousConditions.length);
+    expect(await chips.allTextContents()).toEqual(previousConditions);
     await expect(page.locator("#talent-status")).toHaveText("未识别新条件，可尝试“北京找切配，工资7000以上”");
   });
 

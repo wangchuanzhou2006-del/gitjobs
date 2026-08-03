@@ -100,12 +100,12 @@ const submitImport = async (page: Page, sourceName: string, rawText: string) => 
   await page.locator("#source-name").fill(sourceName);
   await page.locator("#talent-raw-text").fill(rawText);
   await Promise.all([
-    page.waitForURL(/\/dashboard\/moderator\/talent\/review\?batch=[0-9a-f-]+$/),
+    page.waitForURL(/\/dashboard\/moderator\/talent\/import#batch-[0-9a-f-]+$/),
     page.locator('#talent-import-form button[type="submit"]').click(),
   ]);
-  const batchId = new URL(page.url()).searchParams.get("batch");
-  expect(batchId).toMatch(/^[0-9a-f-]{36}$/);
-  return batchId!;
+  const batch = new URL(page.url()).hash.match(/^#batch-([0-9a-f-]{36})$/);
+  expect(batch).toBeTruthy();
+  return batch![1];
 };
 
 const waitForBatchTitles = async (page: Page, batchId: string, titles: string[]) => {

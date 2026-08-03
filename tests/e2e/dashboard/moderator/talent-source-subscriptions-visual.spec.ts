@@ -23,7 +23,8 @@ test.describe("GitJobs - 信息雷达移动端", () => {
     await expect(page.getByLabel("从哪里找")).toBeVisible();
     await expect(page.getByLabel("找什么")).toBeVisible();
     await expect(page.getByLabel("多久找一次")).toBeVisible();
-    await expect(page.getByText("每天一次", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("多久找一次")).toHaveValue("daily");
+    await expect(page.locator('option[value="daily"]')).toHaveText("每天一次");
     await expect(page.getByText("每天两次", { exact: true })).toBeAttached();
     await expect(page.getByText("每周一次", { exact: true })).toBeAttached();
     const button = page.getByRole("button", { name: "保存关注" });
