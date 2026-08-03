@@ -1,12 +1,19 @@
 {% extends "dashboard/dashboard_base_moderator.html" -%}
 {% import "macros/ui.html" as ui -%}
 
-{% block document_language %}zh-CN{% endblock document_language %}
-{% block page_title %}整理人才信息 | GitJobs{% endblock page_title %}
-{% block page_description %}整理并查看餐饮招聘和求职信息的处理进度。{% endblock page_description %}
+{% block document_language %}
+  zh-CN
+{% endblock document_language %}
+{% block page_title %}
+  整理人才信息 | GitJobs
+{% endblock page_title %}
+{% block page_description %}
+  整理并查看餐饮招聘和求职信息的处理进度。
+{% endblock page_description %}
 
 {% block dashboard_main -%}
-  <div id="dashboard-content" class="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6 sm:py-8 lg:px-10">
+  <div id="dashboard-content"
+       class="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6 sm:py-8 lg:px-10">
     <header class="border-b border-stone-200 pb-5 sm:pb-7">
       <p class="mb-2 text-sm font-semibold text-primary-700">人才信息</p>
       <h1 class="m-0 text-2xl font-semibold text-stone-950 sm:text-3xl">整理人才信息</h1>
@@ -20,7 +27,9 @@
            aria-labelledby="talent-import-errors-title">
         <p id="talent-import-errors-title" class="m-0 font-semibold">还有内容需要补充</p>
         <ul class="mb-0 mt-2 list-disc space-y-1 ps-5">
-          {% for error in errors -%}<li>{{ error }}</li>{% endfor -%}
+          {% for error in errors -%}
+            <li>{{ error }}</li>
+          {% endfor -%}
         </ul>
       </div>
     {% endif -%}
@@ -33,7 +42,10 @@
         <legend class="sr-only">信息来源</legend>
         <div>
           <label for="source-type" class="form-label">来自哪里</label>
-          <select id="source-type" name="source_type" class="input-primary mt-2 min-h-11" required>
+          <select id="source-type"
+                  name="source_type"
+                  class="input-primary mt-2 min-h-11"
+                  required>
             {{ ui::select_option(value = "wechat_group", label = "微信群", selected = source_type) }}
             {{ ui::select_option(value = "qq_group", label = "QQ群", selected = source_type) }}
             {{ ui::select_option(value = "web", label = "公开网页", selected = source_type) }}
@@ -58,9 +70,7 @@
         <div class="flex items-end justify-between gap-4">
           <label for="talent-raw-text" class="form-label">粘贴需要整理的内容</label>
           <div class="shrink-0 text-right text-xs text-stone-500">
-            <output id="talent-character-count"
-                    for="talent-raw-text"
-                    aria-live="polite">0 字</output>
+            <output id="talent-character-count" for="talent-raw-text" aria-live="polite">0 字</output>
             <span id="talent-raw-limit" class="block">最多 200,000 字节</span>
           </div>
         </div>
@@ -74,14 +84,17 @@
       </div>
 
       <div class="sticky bottom-0 z-10 -mx-4 border-t border-stone-200 bg-white/95 px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:flex sm:justify-end sm:border-0 sm:bg-transparent sm:p-0">
-        <button type="submit" class="btn-primary min-h-11 w-full justify-center sm:w-auto">开始 AI 整理</button>
+        <button type="submit"
+                class="btn-primary min-h-11 w-full justify-center sm:w-auto">开始 AI 整理</button>
       </div>
     </form>
 
-    <section class="mt-10 border-t border-stone-200 pt-7" aria-labelledby="recent-talent-batches-title">
+    <section class="mt-10 border-t border-stone-200 pt-7"
+             aria-labelledby="recent-talent-batches-title">
       <div class="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 id="recent-talent-batches-title" class="m-0 text-lg font-semibold text-stone-950">最近整理</h2>
+          <h2 id="recent-talent-batches-title"
+              class="m-0 text-lg font-semibold text-stone-950">最近整理</h2>
           <p class="mb-0 mt-1 text-sm text-stone-500">处理完成后，可前往待查看列表确认。</p>
         </div>
       </div>
@@ -90,7 +103,9 @@
   </div>
 
   <script type="module">
-    import { initializeTalentImportForm } from "/static/js/dashboard/moderator/talent-import.js";
+    import {
+      initializeTalentImportForm
+    } from "/static/js/dashboard/moderator/talent-import.js";
     initializeTalentImportForm();
   </script>
 

@@ -340,12 +340,32 @@ pub(crate) struct TalentAiConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct TalentEncryptionConfig {
     /// Version used for new AES-256-GCM envelopes.
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_u64")]
     pub active_version: Option<String>,
     /// AES-256 keys, keyed by their version.
     #[serde(default)]
     pub keys: HashMap<String, SecretValue>,
     /// Independent HMAC-SHA256 pepper for contact deduplication.
     pub contact_pepper: Option<SecretValue>,
+}
+
+fn deserialize_optional_string_or_u64<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrU64 {
+        String(String),
+        U64(u64),
+    }
+
+    Option::<StringOrU64>::deserialize(deserializer).map(|value| {
+        value.map(|value| match value {
+            StringOrU64::String(value) => value,
+            StringOrU64::U64(value) => value.to_string(),
+        })
+    })
 }
 
 /// A configuration secret that is never rendered in debug or serialized output.
@@ -407,6 +427,16 @@ mod tests {
         assert!(config.ai.is_none());
         assert!(config.encryption.keys.is_empty());
         assert!(config.encryption.contact_pepper.is_none());
+    }
+
+    #[test]
+    fn numeric_talent_key_version_deserializes_to_its_canonical_string() {
+        let encryption: TalentEncryptionConfig = serde_json::from_value(serde_json::json!({
+            "active_version": 1,
+        }))
+        .expect("numeric environment-style key version should deserialize");
+
+        assert_eq!(encryption.active_version.as_deref(), Some("1"));
     }
 
     #[test]

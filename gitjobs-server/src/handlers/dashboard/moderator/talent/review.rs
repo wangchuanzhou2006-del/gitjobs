@@ -1174,8 +1174,14 @@ mod tests {
             assert!(html.contains(expected), "{expected}");
         }
         assert!(html.contains("批次编号"));
-        assert!(html.contains(&format!("name=\"batch\" value=\"{batch_id}\"")));
-        assert!(!html.contains("type=\"hidden\" name=\"batch\""));
+        let batch_input = html
+            .split("<input")
+            .skip(1)
+            .filter_map(|fragment| fragment.split_once('>').map(|(tag, _)| tag))
+            .find(|tag| tag.contains("name=\"batch\""))
+            .expect("batch filter input should be rendered");
+        assert!(batch_input.contains(&format!("value=\"{batch_id}\"")));
+        assert!(!batch_input.contains("type=\"hidden\""));
         assert!(!html.contains("fictional_complete_contact_26"));
     }
 

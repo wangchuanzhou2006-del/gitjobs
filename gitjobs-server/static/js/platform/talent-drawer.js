@@ -26,11 +26,9 @@ const makeFact = (label, value) => {
   return row;
 };
 
-const textOrUnknown = (value) =>
-  typeof value === "string" && value.trim() ? value : "待确认";
+const textOrUnknown = (value) => (typeof value === "string" && value.trim() ? value : "待确认");
 
-const numberOrUnknown = (value, suffix) =>
-  Number.isFinite(value) ? `${value} ${suffix}` : "待确认";
+const numberOrUnknown = (value, suffix) => (Number.isFinite(value) ? `${value} ${suffix}` : "待确认");
 
 const salaryLabel = (record) => {
   if (Number.isFinite(record.salaryMin) && Number.isFinite(record.salaryMax))
@@ -41,9 +39,8 @@ const salaryLabel = (record) => {
 };
 
 const locationLabel = (record) =>
-  [record.region, record.district]
-    .filter((value) => typeof value === "string" && value.trim())
-    .join(" ") || "待确认";
+  [record.region, record.district].filter((value) => typeof value === "string" && value.trim()).join(" ") ||
+  "待确认";
 
 export const initializeTalentDrawer = () => {
   const root = document.getElementById("talent-detail-drawer");
@@ -137,18 +134,11 @@ export const initializeTalentDrawer = () => {
         record.mode === "hiring" ? "工时" : "期望工时",
         numberOrUnknown(record.hoursPerDay, "小时/天"),
       ),
-      makeFact(
-        record.mode === "hiring" ? "休息" : "期望休息",
-        numberOrUnknown(record.restDays, "天/月"),
-      ),
+      makeFact(record.mode === "hiring" ? "休息" : "期望休息", numberOrUnknown(record.restDays, "天/月")),
       makeFact("住宿", textOrUnknown(record.lodging)),
       makeFact(
         "住房补贴",
-        record.housingAllowance === true
-          ? "提供"
-          : record.housingAllowance === false
-            ? "不提供"
-            : "待确认",
+        record.housingAllowance === true ? "提供" : record.housingAllowance === false ? "不提供" : "待确认",
       ),
       makeFact("到岗", textOrUnknown(record.availability)),
       makeFact("紧急度", textOrUnknown(record.urgency)),

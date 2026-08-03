@@ -29,7 +29,15 @@
               {{ record.salary_label() }}
             </dd>
           </div>
-          <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
+          <div>
+            <dt>技能</dt>
+            <dd>
+              {% for skill in record.skills %}
+                {{ skill }}
+                {% if !loop.last %}、{% endif %}
+              {% endfor %}
+            </dd>
+          </div>
           <div>
             <dt>经验</dt>
             <dd>
@@ -91,7 +99,9 @@
             </dd>
           </div>
         </dl>
-        <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
+        <ul data-talent-risks aria-label="风险提示">
+          {% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}
+        </ul>
         <div class="talent-match-lens" data-talent-match-lens>
           <p data-talent-match-score>等待输入条件</p>
           <ul data-talent-match-reasons aria-label="推荐原因">
@@ -116,7 +126,15 @@
               {{ record.salary_label() }}
             </dd>
           </div>
-          <div><dt>技能</dt><dd>{% for skill in record.skills %}{{ skill }}{% if !loop.last %}、{% endif %}{% endfor %}</dd></div>
+          <div>
+            <dt>技能</dt>
+            <dd>
+              {% for skill in record.skills %}
+                {{ skill }}
+                {% if !loop.last %}、{% endif %}
+              {% endfor %}
+            </dd>
+          </div>
           <div>
             <dt>经验</dt>
             <dd>
@@ -178,7 +196,9 @@
             </dd>
           </div>
         </dl>
-        <ul data-talent-risks aria-label="风险提示">{% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}</ul>
+        <ul data-talent-risks aria-label="风险提示">
+          {% for flag in record.risk_flags %}<li>{{ flag }}</li>{% endfor %}
+        </ul>
         <div class="talent-match-lens" data-talent-match-lens>
           <p data-talent-match-score>等待输入条件</p>
           <ul data-talent-match-reasons aria-label="推荐原因">
