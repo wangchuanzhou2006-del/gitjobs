@@ -43,9 +43,7 @@ async def parse_document(
     _token: Annotated[None, Depends(require_internal_token)],
 ):
     """Parse an uploaded PDF into page-preserving text. (Task 2)"""
-    return JSONResponse(
-        content={"detail": "not implemented"}, status_code=501
-    )
+    return JSONResponse(content={"detail": "not implemented"}, status_code=501)
 
 
 @app.post("/internal/v1/analyze")
@@ -53,6 +51,4 @@ async def analyze_document(
     _token: Annotated[None, Depends(require_internal_token)],
 ):
     """Analyze a parsed document and return TenderAnalysisV1. (Task 3)"""
-    return JSONResponse(
-        content={"detail": "not implemented"}, status_code=501
-    )
+    return JSONResponse(content={"detail": "not implemented"}, status_code=501)

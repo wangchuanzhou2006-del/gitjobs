@@ -23,9 +23,7 @@ class Settings(BaseSettings):
         return v
 
     def __repr__(self) -> str:
-        return (
-            f"Settings(internal_service_token={self.internal_service_token!r})"
-        )
+        return f"Settings(internal_service_token={self.internal_service_token!r})"
 
 
 def get_settings() -> Settings:

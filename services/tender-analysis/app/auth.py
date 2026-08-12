@@ -21,13 +21,7 @@ async def require_internal_token(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
     supplied = (
-        credentials.credentials
-        if credentials and credentials.scheme.lower() == "bearer"
-        else ""
+        credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else ""
     )
-    if not secrets.compare_digest(
-        supplied, settings.internal_service_token.get_secret_value()
-    ):
-        raise HTTPException(
-            status_code=401, detail="invalid internal credentials"
-        )
+    if not secrets.compare_digest(supplied, settings.internal_service_token.get_secret_value()):
+        raise HTTPException(status_code=401, detail="invalid internal credentials")

@@ -1,36 +1,437 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://gitjobs.dev/contracts/tender-analysis.v1.schema.json",
-  "title": "Tender Analysis v1",
-  "description": "Canonical public result contract for AI tender document analysis v1.",
-  "type": "object",
+  "$defs": {
+    "AnalysisMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "model_provider": {
+          "title": "Model Provider",
+          "type": "string"
+        },
+        "model_name": {
+          "title": "Model Name",
+          "type": "string"
+        },
+        "prompt_versions": {
+          "$ref": "#/$defs/PromptVersions"
+        },
+        "contract_version": {
+          "const": "tender-analysis.v1",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "completeness": {
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "title": "Completeness",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_provider",
+        "model_name",
+        "prompt_versions",
+        "contract_version",
+        "completeness"
+      ],
+      "title": "AnalysisMeta",
+      "type": "object"
+    },
+    "Citation": {
+      "additionalProperties": false,
+      "properties": {
+        "page_number": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Page Number",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "pattern": "^page-[1-9][0-9]*-chunk-[0-9]+$",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "page_number",
+        "chunk_id",
+        "quote"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "EvidenceValue": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "requires_review": {
+          "title": "Requires Review",
+          "type": "boolean"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value",
+        "confidence",
+        "requires_review",
+        "citations"
+      ],
+      "title": "EvidenceValue",
+      "type": "object"
+    },
+    "ProjectInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "project_name": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "procurement_entity": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "budget_amount": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "budget_currency": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "service_period": {
+          "$ref": "#/$defs/EvidenceValue"
+        },
+        "bid_deadline": {
+          "$ref": "#/$defs/EvidenceValue"
+        }
+      },
+      "required": [
+        "project_name",
+        "procurement_entity",
+        "budget_amount",
+        "budget_currency",
+        "service_period",
+        "bid_deadline"
+      ],
+      "title": "ProjectInfo",
+      "type": "object"
+    },
+    "PromptVersions": {
+      "additionalProperties": false,
+      "properties": {
+        "project_info": {
+          "const": "tender-project-info-v1",
+          "title": "Project Info",
+          "type": "string"
+        },
+        "qualifications": {
+          "const": "tender-qualifications-v1",
+          "title": "Qualifications",
+          "type": "string"
+        },
+        "risks": {
+          "const": "tender-risks-v1",
+          "title": "Risks",
+          "type": "string"
+        },
+        "materials": {
+          "const": "tender-materials-v1",
+          "title": "Materials",
+          "type": "string"
+        },
+        "review": {
+          "const": "tender-review-v1",
+          "title": "Review",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_info",
+        "qualifications",
+        "risks",
+        "materials",
+        "review"
+      ],
+      "title": "PromptVersions",
+      "type": "object"
+    },
+    "Qualification": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "hard_qualification",
+            "scoring_item",
+            "submission_material",
+            "contract_performance",
+            "general_note"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "requirement": {
+          "minLength": 1,
+          "title": "Requirement",
+          "type": "string"
+        },
+        "original_text": {
+          "minLength": 1,
+          "title": "Original Text",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "requires_review": {
+          "title": "Requires Review",
+          "type": "boolean"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "requirement",
+        "original_text",
+        "confidence",
+        "requires_review",
+        "citations"
+      ],
+      "title": "Qualification",
+      "type": "object"
+    },
+    "RequiredMaterial": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "source_requirement": {
+          "title": "Source Requirement",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "requires_review": {
+          "title": "Requires Review",
+          "type": "boolean"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "source_requirement",
+        "confidence",
+        "requires_review",
+        "citations"
+      ],
+      "title": "RequiredMaterial",
+      "type": "object"
+    },
+    "Risk": {
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "fact": {
+          "minLength": 1,
+          "title": "Fact",
+          "type": "string"
+        },
+        "risk_judgment": {
+          "minLength": 1,
+          "title": "Risk Judgment",
+          "type": "string"
+        },
+        "impact": {
+          "title": "Impact",
+          "type": "string"
+        },
+        "suggestion": {
+          "title": "Suggestion",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "requires_review": {
+          "title": "Requires Review",
+          "type": "boolean"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "severity",
+        "fact",
+        "risk_judgment",
+        "impact",
+        "suggestion",
+        "confidence",
+        "requires_review",
+        "citations"
+      ],
+      "title": "Risk",
+      "type": "object"
+    },
+    "UnknownItem": {
+      "additionalProperties": false,
+      "properties": {
+        "field_name": {
+          "minLength": 1,
+          "title": "Field Name",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "missing",
+            "conflict",
+            "low_confidence",
+            "unsupported"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "field_name",
+        "reason",
+        "detail",
+        "citations"
+      ],
+      "title": "UnknownItem",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "type": "string",
-      "const": "tender-analysis.v1"
+      "const": "tender-analysis.v1",
+      "title": "Schema Version",
+      "type": "string"
     },
-    "project_info": { "$ref": "#/$defs/ProjectInfo" },
+    "project_info": {
+      "$ref": "#/$defs/ProjectInfo"
+    },
     "qualifications": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/Qualification" },
-      "maxItems": 200
+      "items": {
+        "$ref": "#/$defs/Qualification"
+      },
+      "maxItems": 200,
+      "title": "Qualifications",
+      "type": "array"
     },
     "risks": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/Risk" },
-      "maxItems": 200
+      "items": {
+        "$ref": "#/$defs/Risk"
+      },
+      "maxItems": 200,
+      "title": "Risks",
+      "type": "array"
     },
     "required_materials": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/RequiredMaterial" },
-      "maxItems": 300
+      "items": {
+        "$ref": "#/$defs/RequiredMaterial"
+      },
+      "maxItems": 300,
+      "title": "Required Materials",
+      "type": "array"
     },
     "unknowns": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/UnknownItem" },
-      "maxItems": 200
+      "items": {
+        "$ref": "#/$defs/UnknownItem"
+      },
+      "maxItems": 200,
+      "title": "Unknowns",
+      "type": "array"
     },
-    "analysis_meta": { "$ref": "#/$defs/AnalysisMeta" }
+    "analysis_meta": {
+      "$ref": "#/$defs/AnalysisMeta"
+    }
   },
   "required": [
     "schema_version",
@@ -41,212 +442,9 @@
     "unknowns",
     "analysis_meta"
   ],
-  "additionalProperties": false,
-  "$defs": {
-    "Citation": {
-      "type": "object",
-      "properties": {
-        "page_number": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "chunk_id": { "type": "string", "pattern": "^page-[1-9][0-9]*-chunk-[0-9]+$" },
-        "quote": { "type": "string", "minLength": 1, "maxLength": 2000 }
-      },
-      "required": ["page_number", "chunk_id", "quote"],
-      "additionalProperties": false
-    },
-    "DocumentChunk": {
-      "type": "object",
-      "properties": {
-        "chunk_id": { "type": "string", "pattern": "^page-[1-9][0-9]*-chunk-[0-9]+$" },
-        "page_number": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "text": { "type": "string", "minLength": 1 }
-      },
-      "required": ["chunk_id", "page_number", "text"],
-      "additionalProperties": false
-    },
-    "ParsedPage": {
-      "type": "object",
-      "properties": {
-        "page_number": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "text": { "type": "string" },
-        "chunks": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/DocumentChunk" }
-        }
-      },
-      "required": ["page_number", "text", "chunks"],
-      "additionalProperties": false
-    },
-    "ParsedDocument": {
-      "type": "object",
-      "properties": {
-        "page_count": { "type": "integer", "minimum": 0, "maximum": 1000 },
-        "pages": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/ParsedPage" }
-        }
-      },
-      "required": ["page_count", "pages"],
-      "additionalProperties": false
-    },
-    "ParseResponse": {
-      "type": "object",
-      "properties": {
-        "status": { "type": "string" },
-        "parsed_document": { "$ref": "#/$defs/ParsedDocument" },
-        "error_code": { "type": "string" }
-      },
-      "required": ["status"],
-      "additionalProperties": false
-    },
-    "AnalyzeRequest": {
-      "type": "object",
-      "properties": {
-        "job_id": { "type": "string", "minLength": 1 },
-        "document": { "$ref": "#/$defs/ParsedDocument" }
-      },
-      "required": ["job_id", "document"],
-      "additionalProperties": false
-    },
-    "EvidenceValue": {
-      "type": "object",
-      "properties": {
-        "value": { "type": ["string", "null"] },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "requires_review": { "type": "boolean" },
-        "citations": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Citation" },
-          "maxItems": 20
-        }
-      },
-      "required": ["value", "confidence", "requires_review", "citations"],
-      "additionalProperties": false
-    },
-    "ProjectInfo": {
-      "type": "object",
-      "properties": {
-        "project_name": { "$ref": "#/$defs/EvidenceValue" },
-        "procurement_entity": { "$ref": "#/$defs/EvidenceValue" },
-        "budget_amount": { "$ref": "#/$defs/EvidenceValue" },
-        "budget_currency": { "$ref": "#/$defs/EvidenceValue" },
-        "service_period": { "$ref": "#/$defs/EvidenceValue" },
-        "bid_deadline": { "$ref": "#/$defs/EvidenceValue" }
-      },
-      "required": [
-        "project_name",
-        "procurement_entity",
-        "budget_amount",
-        "budget_currency",
-        "service_period",
-        "bid_deadline"
-      ],
-      "additionalProperties": false
-    },
-    "Qualification": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "hard_qualification",
-            "scoring_item",
-            "submission_material",
-            "contract_performance",
-            "general_note"
-          ]
-        },
-        "requirement": { "type": "string", "minLength": 1 },
-        "original_text": { "type": "string", "minLength": 1 },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "requires_review": { "type": "boolean" },
-        "citations": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Citation" },
-          "maxItems": 20
-        }
-      },
-      "required": ["kind", "requirement", "original_text", "confidence", "requires_review", "citations"],
-      "additionalProperties": false
-    },
-    "Risk": {
-      "type": "object",
-      "properties": {
-        "severity": {
-          "type": "string",
-          "enum": ["low", "medium", "high"]
-        },
-        "fact": { "type": "string", "minLength": 1 },
-        "risk_judgment": { "type": "string", "minLength": 1 },
-        "impact": { "type": "string" },
-        "suggestion": { "type": "string" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "requires_review": { "type": "boolean" },
-        "citations": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Citation" },
-          "maxItems": 20
-        }
-      },
-      "required": ["severity", "fact", "risk_judgment", "impact", "suggestion", "confidence", "requires_review", "citations"],
-      "additionalProperties": false
-    },
-    "RequiredMaterial": {
-      "type": "object",
-      "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "description": { "type": "string" },
-        "source_requirement": { "type": "string" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "requires_review": { "type": "boolean" },
-        "citations": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Citation" },
-          "maxItems": 20
-        }
-      },
-      "required": ["name", "description", "source_requirement", "confidence", "requires_review", "citations"],
-      "additionalProperties": false
-    },
-    "UnknownItem": {
-      "type": "object",
-      "properties": {
-        "field_name": { "type": "string", "minLength": 1 },
-        "reason": {
-          "type": "string",
-          "enum": ["missing", "conflict", "low_confidence", "unsupported"]
-        },
-        "detail": { "type": "string" },
-        "citations": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Citation" },
-          "maxItems": 20
-        }
-      },
-      "required": ["field_name", "reason", "detail", "citations"],
-      "additionalProperties": false
-    },
-    "AnalysisMeta": {
-      "type": "object",
-      "properties": {
-        "model_provider": { "type": "string" },
-        "model_name": { "type": "string" },
-        "prompt_versions": {
-          "type": "object",
-          "properties": {
-            "project_info": { "type": "string" },
-            "qualifications": { "type": "string" },
-            "risks": { "type": "string" },
-            "materials": { "type": "string" },
-            "review": { "type": "string" }
-          },
-          "required": ["project_info", "qualifications", "risks", "materials", "review"],
-          "additionalProperties": false
-        },
-        "contract_version": { "type": "string", "const": "tender-analysis.v1" },
-        "completeness": { "type": "string" }
-      },
-      "required": ["model_provider", "model_name", "prompt_versions", "contract_version", "completeness"],
-      "additionalProperties": false
-    }
-  }
+  "title": "Tender Analysis v1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitjobs.dev/contracts/tender-analysis.v1.schema.json",
+  "description": "Canonical public result contract for AI tender document analysis v1."
 }
