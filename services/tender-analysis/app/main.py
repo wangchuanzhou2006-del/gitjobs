@@ -43,7 +43,8 @@ async def health_check():
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MiB file field
 MAX_REQUEST_BYTES = 64 * 1024 * 1024  # 64 MiB total body
-MAX_HEADER_BYTES = 16 * 1024  # per multipart header line
+MAX_HEADER_BYTES = 16 * 1024  # cumulative multipart header budget
+MAX_HEADER_COUNT = 100  # per-part header count bound
 
 
 class _FileTooLargeError(Exception):
@@ -51,37 +52,40 @@ class _FileTooLargeError(Exception):
 
 
 class _HeaderTooLargeError(Exception):
-    """Raised when a multipart header exceeds MAX_HEADER_BYTES."""
+    """Raised when cumulative multipart headers exceed MAX_HEADER_BYTES."""
 
 
 class _MultipartFileAccumulator:
-    """Collect the single ``file`` field while enforcing size limits."""
+    """Collect the single ``file`` field while tracking multipart structure."""
 
     def __init__(self, max_file_bytes: int, max_header_bytes: int) -> None:
         self.max_file_bytes = max_file_bytes
         self.max_header_bytes = max_header_bytes
         self.file_data = bytearray()
-        self.file_seen = False
+        self.file_part_count = 0
+        self.total_part_count = 0
+        self.completed_part_count = 0
+        self.message_completed = False
         self._is_file_part = False
         self._header_name = bytearray()
         self._header_value = bytearray()
-        self._header_size = 0
+        self._total_header_bytes = 0
 
     def on_part_begin(self) -> None:
+        self.total_part_count += 1
         self._is_file_part = False
         self._header_name = bytearray()
         self._header_value = bytearray()
-        self._header_size = 0
 
     def on_header_field(self, data, start, end) -> None:
-        self._header_size += end - start
-        if self._header_size > self.max_header_bytes:
+        self._total_header_bytes += end - start
+        if self._total_header_bytes > self.max_header_bytes:
             raise _HeaderTooLargeError()
         self._header_name += data[start:end]
 
     def on_header_value(self, data, start, end) -> None:
-        self._header_size += end - start
-        if self._header_size > self.max_header_bytes:
+        self._total_header_bytes += end - start
+        if self._total_header_bytes > self.max_header_bytes:
             raise _HeaderTooLargeError()
         self._header_value += data[start:end]
 
@@ -95,15 +99,23 @@ class _MultipartFileAccumulator:
                 self._is_file_part = True
         self._header_name = bytearray()
         self._header_value = bytearray()
-        self._header_size = 0
+
+    def on_headers_finished(self) -> None:
+        if self._is_file_part:
+            self.file_part_count += 1
 
     def on_part_data(self, data, start, end) -> None:
         if not self._is_file_part:
             return
-        self.file_seen = True
         self.file_data += data[start:end]
         if len(self.file_data) > self.max_file_bytes:
             raise _FileTooLargeError()
+
+    def on_part_end(self) -> None:
+        self.completed_part_count += 1
+
+    def on_end(self) -> None:
+        self.message_completed = True
 
     def callbacks(self) -> dict:
         return {
@@ -111,7 +123,10 @@ class _MultipartFileAccumulator:
             "on_header_field": self.on_header_field,
             "on_header_value": self.on_header_value,
             "on_header_end": self.on_header_end,
+            "on_headers_finished": self.on_headers_finished,
             "on_part_data": self.on_part_data,
+            "on_part_end": self.on_part_end,
+            "on_end": self.on_end,
         }
 
 
@@ -126,9 +141,10 @@ async def parse_document(
 ):
     """Stream and parse an uploaded PDF, after authentication.
 
-    The multipart body is parsed incrementally and bounded: 50 MiB for the
-    ``file`` field, 64 MiB for the whole body, and a cap on header size. No
-    temporary files are used, and no exception text is returned to clients.
+    The multipart body is parsed incrementally and must contain exactly one
+    complete ``file`` part terminated by the correct final boundary. Size and
+    header budgets are enforced on actual streamed bytes; no temporary files
+    are used.
     """
     content_type = request.headers.get("content-type", "")
     try:
@@ -140,7 +156,12 @@ async def parse_document(
         return _error(400, "invalid_multipart")
 
     accumulator = _MultipartFileAccumulator(MAX_UPLOAD_BYTES, MAX_HEADER_BYTES)
-    parser = MultipartParser(boundary, accumulator.callbacks())
+    parser = MultipartParser(
+        boundary,
+        accumulator.callbacks(),
+        max_header_count=MAX_HEADER_COUNT,
+        max_header_size=float("inf"),
+    )
 
     total = 0
     async for chunk in request.stream():
@@ -156,9 +177,18 @@ async def parse_document(
         except MultipartParseError:
             return _error(400, "invalid_multipart")
 
-    parser.finalize()
+    try:
+        parser.finalize()
+    except MultipartParseError:
+        return _error(400, "invalid_multipart")
 
-    if not accumulator.file_seen:
+    if not accumulator.message_completed:
+        return _error(400, "invalid_multipart")
+    if accumulator.total_part_count != 1:
+        return _error(400, "invalid_multipart")
+    if accumulator.file_part_count != 1:
+        return _error(400, "invalid_multipart")
+    if accumulator.completed_part_count != 1:
         return _error(400, "invalid_multipart")
 
     try:

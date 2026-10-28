@@ -534,3 +534,136 @@ async def test_get_text_exception_response_omits_sentinel(auth_env, monkeypatch)
     assert sentinel not in response.text
     parsed_response = ParseResponse.model_validate(response.json())
     assert parsed_response.error_code == "invalid_pdf"
+
+
+# ═══════════════════════════════════════════════════════════════
+# ── Correction 02: complete single-file multipart validation ──
+# ═══════════════════════════════════════════════════════════════
+
+
+def _file_headers():
+    return [
+        ("Content-Disposition", 'form-data; name="file"; filename="t.pdf"'),
+        ("Content-Type", "application/pdf"),
+    ]
+
+
+def _multipart(parts, boundary, *, final=True):
+    """Build a multipart body from a list of (headers, data) tuples."""
+    body = b""
+    for headers, data in parts:
+        body += b"--" + boundary.encode("latin-1") + b"\r\n"
+        for name, value in headers:
+            body += name.encode("latin-1") + b": " + value.encode("latin-1") + b"\r\n"
+        body += b"\r\n"
+        body += data
+        body += b"\r\n"
+    if final:
+        body += b"--" + boundary.encode("latin-1") + b"--\r\n"
+    return body
+
+
+async def _post_multipart_raw(auth_env, body, boundary):
+    transport, token = auth_env
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(
+            "/internal/v1/parse",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            content=body,
+        )
+
+
+@pytest.mark.anyio
+async def test_missing_final_boundary_returns_400(auth_env, monkeypatch):
+    """A body with no final --boundary-- must return 400 and never parse."""
+    from app import main
+
+    called = {"count": 0}
+
+    def fake_parse_pdf(data):
+        called["count"] += 1
+        raise AssertionError("parse_pdf must not be called")
+
+    monkeypatch.setattr(main, "parse_pdf", fake_parse_pdf)
+
+    body = _multipart([(_file_headers(), b"PDFBYTES")], boundary="b", final=False)
+    response = await _post_multipart_raw(auth_env, body, "b")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_multipart"
+    assert called["count"] == 0
+
+
+@pytest.mark.anyio
+async def test_wrong_final_boundary_returns_400(auth_env, monkeypatch):
+    """A mismatched final --otherboundary-- must return 400 and never parse."""
+    from app import main
+
+    called = {"count": 0}
+
+    def fake_parse_pdf(data):
+        called["count"] += 1
+        raise AssertionError("parse_pdf must not be called")
+
+    monkeypatch.setattr(main, "parse_pdf", fake_parse_pdf)
+
+    body = _multipart([(_file_headers(), b"PDFBYTES")], boundary="b", final=False)
+    body += b"--otherboundary--\r\n"
+    response = await _post_multipart_raw(auth_env, body, "b")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_multipart"
+    assert called["count"] == 0
+
+
+@pytest.mark.anyio
+async def test_duplicate_file_part_returns_400(auth_env, monkeypatch):
+    """Two file parts must return 400 and never concatenate files."""
+    from app import main
+
+    called = {"count": 0}
+
+    def fake_parse_pdf(data):
+        called["count"] += 1
+        raise AssertionError("parse_pdf must not be called")
+
+    monkeypatch.setattr(main, "parse_pdf", fake_parse_pdf)
+
+    pdf = _make_pdf(["budget"])
+    body = _multipart([(_file_headers(), b""), (_file_headers(), pdf)], boundary="b")
+    response = await _post_multipart_raw(auth_env, body, "b")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_multipart"
+    assert called["count"] == 0
+
+
+@pytest.mark.anyio
+async def test_zero_byte_file_part_returns_invalid_pdf(auth_env):
+    """A complete but empty file part is parsed and returns invalid_pdf."""
+    from app.contracts import ParseResponse
+
+    body = _multipart([(_file_headers(), b"")], boundary="b")
+    response = await _post_multipart_raw(auth_env, body, "b")
+
+    assert response.status_code == 422
+    parsed_response = ParseResponse.model_validate(response.json())
+    assert parsed_response.error_code == "invalid_pdf"
+
+
+@pytest.mark.anyio
+async def test_header_budget_is_cumulative(auth_env, monkeypatch):
+    """Many small headers must trip the cumulative header budget."""
+    from app import main
+
+    monkeypatch.setattr(main, "MAX_HEADER_BYTES", 200)
+
+    headers = _file_headers() + [(f"X-Extra-{i}", "value") for i in range(12)]
+    body = _multipart([(headers, b"x")], boundary="b")
+    response = await _post_multipart_raw(auth_env, body, "b")
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "header_too_large"
