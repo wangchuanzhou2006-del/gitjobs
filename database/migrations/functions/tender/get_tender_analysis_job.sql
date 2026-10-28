@@ -13,7 +13,6 @@ begin
             project.title as project_title,
             job.status,
             job.error_code,
-            job.error_message,
             job.model_provider,
             job.model_name,
             job.prompt_version,

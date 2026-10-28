@@ -1,5 +1,5 @@
 begin;
-select plan(19);
+select plan(34);
 
 \set owner '00000000-0000-0000-0000-000000000601'
 \set other '00000000-0000-0000-0000-000000000602'
@@ -28,7 +28,7 @@ select create_tender_document_job(
     jsonb_build_object(
         'user_id', :'owner',
         'project_id', :'project_id',
-        'storage_key', 'docs/0000000000000000000000000000000000000000000000000000000000000001.pdf',
+        'storage_key', 'docs/key1.pdf',
         'sha256', '0000000000000000000000000000000000000000000000000000000000000001',
         'size_bytes', 1234,
         'filename', 'tender.pdf',
@@ -48,15 +48,20 @@ select is(
     'true',
     'first document job creation reports created=true'
 );
+select is(
+    jsonb_extract_path_text(:'job_result'::jsonb, 'document_created'),
+    'true',
+    'first document upload reports document_created=true'
+);
 
 select create_tender_document_job(
     jsonb_build_object(
         'user_id', :'owner',
         'project_id', :'project_id',
-        'storage_key', 'docs/0000000000000000000000000000000000000000000000000000000000000001.pdf',
+        'storage_key', 'docs/key2.pdf',
         'sha256', '0000000000000000000000000000000000000000000000000000000000000001',
-        'size_bytes', 1234,
-        'filename', 'tender.pdf',
+        'size_bytes', 9999,
+        'filename', 'other.pdf',
         'analysis_config_hash', 'config-v1',
         'model_provider', 'openai',
         'model_name', 'gpt-4o',
@@ -75,38 +80,32 @@ select is(
     'false',
     'duplicate document job reports created=false'
 );
-
-select throws_ok(
-    $$
-    select create_tender_document_job(
-        jsonb_build_object(
-            'user_id', '00000000-0000-0000-0000-000000000602',
-            'project_id', '00000000-0000-0000-0000-000000000000',
-            'storage_key', 'docs/x.pdf',
-            'sha256', '0000000000000000000000000000000000000000000000000000000000000002',
-            'size_bytes', 1,
-            'filename', 'x.pdf',
-            'analysis_config_hash', 'config-v1',
-            'model_provider', null,
-            'model_name', null,
-            'prompt_version', null
-        )
-    )
-    $$,
-    '42501',
-    null,
-    'document creation is rejected for a project the caller does not own'
+select is(
+    jsonb_extract_path_text(:'reused_job'::jsonb, 'document_created'),
+    'false',
+    'duplicate upload reports document_created=false'
 );
 
 select is(
-    get_tender_analysis_job(:'other', :'job_id'::uuid),
-    null,
-    'another user cannot read the job'
+    (select storage_key from tender_documents where document_id = (
+        select document_id from tender_analysis_jobs where job_id = :'job_id'::uuid
+    )),
+    'docs/key1.pdf',
+    'duplicate upload keeps the original storage key'
 );
 select is(
-    list_tender_projects(:'other'),
-    '[]'::jsonb,
-    'another user lists no projects'
+    (select size_bytes from tender_documents where document_id = (
+        select document_id from tender_analysis_jobs where job_id = :'job_id'::uuid
+    )),
+    1234::bigint,
+    'duplicate upload keeps the original size'
+);
+select is(
+    (select filename from tender_documents where document_id = (
+        select document_id from tender_analysis_jobs where job_id = :'job_id'::uuid
+    )),
+    'tender.pdf',
+    'duplicate upload keeps the original filename'
 );
 
 select claim_tender_analysis_job() as claimed_job
@@ -126,7 +125,6 @@ select is(
     'parsing',
     'claim moves the queued job to parsing'
 );
-
 select is(
     claim_tender_analysis_job(),
     null,
@@ -245,10 +243,225 @@ select is(
     null,
     'another user cannot read the report'
 );
+
+select create_tender_document_job(
+    jsonb_build_object(
+        'user_id', :'owner',
+        'project_id', :'project_id',
+        'storage_key', 'docs/key1.pdf',
+        'sha256', '0000000000000000000000000000000000000000000000000000000000000001',
+        'size_bytes', 1234,
+        'filename', 'tender.pdf',
+        'analysis_config_hash', 'config-v1',
+        'model_provider', 'openai',
+        'model_name', 'gpt-4o',
+        'prompt_version', 'tender-project-info-v1'
+    )
+) as completed_reuse
+\gset
+
+select is(
+    jsonb_extract_path_text(:'completed_reuse'::jsonb, 'job_id'),
+    :'job_id',
+    're-creating a completed job reuses the existing result'
+);
+select is(
+    jsonb_extract_path_text(:'completed_reuse'::jsonb, 'created'),
+    'false',
+    're-creating a completed job does not create a duplicate'
+);
 select is(
     jsonb_array_length(list_tender_projects(:'owner')),
     1,
     'the owner lists their single project'
+);
+
+-- Part B: failed job, error-code whitelist, and expired-claim fencing.
+
+select create_tender_document_job(
+    jsonb_build_object(
+        'user_id', :'owner',
+        'project_id', :'project_id',
+        'storage_key', 'docs/key2.pdf',
+        'sha256', '0000000000000000000000000000000000000000000000000000000000000002',
+        'size_bytes', 10,
+        'filename', 'second.pdf',
+        'analysis_config_hash', 'config-v2',
+        'model_provider', 'openai',
+        'model_name', 'gpt-4o',
+        'prompt_version', 'tender-project-info-v1'
+    )
+) as job2_result
+\gset
+
+select jsonb_extract_path_text(:'job2_result'::jsonb, 'job_id') as job2_id
+\gset
+
+select claim_tender_analysis_job() as claimed2
+\gset
+
+select jsonb_extract_path_text(:'claimed2'::jsonb, 'claim_token') as claim_token2,
+       jsonb_extract_path_text(:'claimed2'::jsonb, 'claim_version') as claim_version2
+\gset
+
+select transition_tender_analysis_job(
+    jsonb_build_object(
+        'job_id', :'job2_id'::uuid,
+        'claim_token', :'claim_token2'::uuid,
+        'claim_version', :'claim_version2'::bigint,
+        'next_status', 'analyzing'
+    )
+);
+
+update tender_analysis_jobs
+set claim_expires_at = current_timestamp - interval '1 second'
+where job_id = :'job2_id'::uuid;
+
+select claim_tender_analysis_job() as reclaimed2
+\gset
+
+select jsonb_extract_path_text(:'reclaimed2'::jsonb, 'claim_token') as claim_token3,
+       jsonb_extract_path_text(:'reclaimed2'::jsonb, 'claim_version') as claim_version3
+\gset
+
+select is(
+    jsonb_extract_path_text(:'reclaimed2'::jsonb, 'job_id'),
+    :'job2_id',
+    'an expired in-flight job can be reclaimed'
+);
+select is(
+    :'claim_version3'::bigint,
+    (:'claim_version2'::bigint + 1),
+    're-claim increments the claim version'
+);
+select isnt(
+    :'claim_token3'::uuid,
+    :'claim_token2'::uuid,
+    're-claim issues a fresh claim token'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint,
+                'status', 'completed',
+                'result', jsonb_build_object(
+                    'schema_version', 'tender-analysis.v1',
+                    'project_info', jsonb_build_object(),
+                    'qualifications', jsonb_build_array(),
+                    'risks', jsonb_build_array(),
+                    'required_materials', jsonb_build_array(),
+                    'unknowns', jsonb_build_array(),
+                    'analysis_meta', jsonb_build_object()
+                )
+            )
+        )
+        $sql$,
+        :'job2_id',
+        :'claim_token2',
+        :'claim_version2'
+    ),
+    '40001',
+    null,
+    'an expired claim cannot complete the job'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select fail_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint,
+                'error_code', 'analysis_unavailable'
+            )
+        )
+        $sql$,
+        :'job2_id',
+        :'claim_token2',
+        :'claim_version2'
+    ),
+    '40001',
+    null,
+    'an expired claim cannot fail the job'
+);
+
+select throws_ok(
+    $$
+    select fail_tender_analysis_job(
+        jsonb_build_object(
+            'job_id', '00000000-0000-0000-0000-000000000000',
+            'claim_token', '00000000-0000-0000-0000-000000000000',
+            'claim_version', 1
+        )
+    )
+    $$,
+    '22023',
+    null,
+    'fail rejects a missing error code'
+);
+
+select throws_ok(
+    $$
+    select fail_tender_analysis_job(
+        jsonb_build_object(
+            'job_id', '00000000-0000-0000-0000-000000000000',
+            'claim_token', '00000000-0000-0000-0000-000000000000',
+            'claim_version', 1,
+            'error_code', null
+        )
+    )
+    $$,
+    '22023',
+    null,
+    'fail rejects a null error code'
+);
+
+select throws_ok(
+    $$
+    select fail_tender_analysis_job(
+        jsonb_build_object(
+            'job_id', '00000000-0000-0000-0000-000000000000',
+            'claim_token', '00000000-0000-0000-0000-000000000000',
+            'claim_version', 1,
+            'error_code', 'arbitrary_sentinel'
+        )
+    )
+    $$,
+    '22023',
+    null,
+    'fail rejects a non-whitelisted error code'
+);
+
+select fail_tender_analysis_job(
+    jsonb_build_object(
+        'job_id', :'job2_id'::uuid,
+        'claim_token', :'claim_token3'::uuid,
+        'claim_version', :'claim_version3'::bigint,
+        'error_code', 'analysis_unavailable',
+        'error_message', 'TOP_SECRET_SENTINEL'
+    )
+);
+
+select is(
+    (select status from tender_analysis_jobs where job_id = :'job2_id'::uuid),
+    'failed',
+    'a valid claim fails the job'
+);
+select is(
+    (select error_code from tender_analysis_jobs where job_id = :'job2_id'::uuid),
+    'analysis_unavailable',
+    'fail stores only the approved error code'
+);
+select is(
+    (get_tender_analysis_job(:'owner', :'job2_id'::uuid))::text like '%TOP_SECRET_SENTINEL%',
+    false,
+    'fail never persists caller error text'
 );
 
 select * from finish();

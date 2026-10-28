@@ -660,7 +660,7 @@ select columns_are('tender_documents', array[
 select columns_are('tender_analysis_jobs', array[
     'job_id', 'document_id', 'analysis_config_hash', 'status', 'claim_token',
     'claim_version', 'claim_expires_at', 'attempt_count', 'error_code',
-    'error_message', 'model_provider', 'model_name', 'prompt_version',
+    'model_provider', 'model_name', 'prompt_version',
     'created_at', 'updated_at', 'completed_at'
 ]);
 

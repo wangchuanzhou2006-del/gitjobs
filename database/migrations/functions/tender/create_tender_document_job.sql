@@ -1,8 +1,10 @@
--- Upserts a document and reuses an existing active job for the same config.
+-- Upserts a document without overwriting an existing one, and reuses an
+-- existing non-failed job (active, partial, or completed) for the same config.
 create or replace function create_tender_document_job(p_input jsonb)
 returns jsonb as $$
 declare
     v_document_id uuid;
+    v_document_created boolean;
     v_job_id uuid;
 begin
     if p_input is null or jsonb_typeof(p_input) <> 'object' then
@@ -41,22 +43,33 @@ begin
         (p_input->>'size_bytes')::bigint,
         nullif(p_input->>'filename', '')
     )
-    on conflict (project_id, sha256) do update
-    set storage_key = excluded.storage_key,
-        size_bytes = excluded.size_bytes,
-        filename = excluded.filename
+    on conflict (project_id, sha256) do nothing
     returning document_id into v_document_id;
+
+    if v_document_id is null then
+        select document_id into v_document_id
+        from tender_documents
+        where project_id = (p_input->>'project_id')::uuid
+          and sha256 = (p_input->>'sha256');
+        v_document_created := false;
+    else
+        v_document_created := true;
+    end if;
 
     select job_id into v_job_id
     from tender_analysis_jobs
     where document_id = v_document_id
       and analysis_config_hash = (p_input->>'analysis_config_hash')
-      and status in ('queued', 'parsing', 'analyzing')
+      and status in ('queued', 'parsing', 'analyzing', 'partial', 'completed')
     order by created_at
     limit 1;
 
     if v_job_id is not null then
-        return jsonb_build_object('job_id', v_job_id, 'created', false);
+        return jsonb_build_object(
+            'job_id', v_job_id,
+            'created', false,
+            'document_created', v_document_created
+        );
     end if;
 
     insert into tender_analysis_jobs (
@@ -75,6 +88,10 @@ begin
     )
     returning job_id into v_job_id;
 
-    return jsonb_build_object('job_id', v_job_id, 'created', true);
+    return jsonb_build_object(
+        'job_id', v_job_id,
+        'created', true,
+        'document_created', v_document_created
+    );
 end;
 $$ language plpgsql;

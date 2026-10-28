@@ -78,7 +78,6 @@ begin
         claim_token = null,
         claim_expires_at = null,
         error_code = null,
-        error_message = null,
         completed_at = current_timestamp,
         updated_at = current_timestamp
     where job_id = (p_completion->>'job_id')::uuid;

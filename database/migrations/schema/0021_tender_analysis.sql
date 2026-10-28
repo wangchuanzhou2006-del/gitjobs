@@ -36,7 +36,6 @@ create table tender_analysis_jobs (
     claim_expires_at timestamptz,
     attempt_count integer not null default 0 check (attempt_count >= 0),
     error_code text,
-    error_message text,
     model_provider text,
     model_name text,
     prompt_version text,

@@ -96,6 +96,7 @@ impl fmt::Debug for NewTenderDocumentJob {
 pub(crate) struct CreateJobOutcome {
     pub job_id: Uuid,
     pub created: bool,
+    pub document_created: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -182,7 +183,6 @@ pub(crate) struct FailedTenderJob {
     pub claim_token: Uuid,
     pub claim_version: i64,
     pub error_code: String,
-    pub error_message: Option<String>,
 }
 
 impl fmt::Debug for FailedTenderJob {
@@ -193,7 +193,6 @@ impl fmt::Debug for FailedTenderJob {
             .field("claim_token", &"[REDACTED]")
             .field("claim_version", &self.claim_version)
             .field("error_code", &self.error_code)
-            .field("error_message", &"[REDACTED]")
             .finish()
     }
 }
@@ -206,7 +205,6 @@ pub(crate) struct TenderJobView {
     pub project_title: String,
     pub status: TenderJobStatus,
     pub error_code: Option<String>,
-    pub error_message: Option<String>,
     pub model_provider: Option<String>,
     pub model_name: Option<String>,
     pub prompt_version: Option<String>,

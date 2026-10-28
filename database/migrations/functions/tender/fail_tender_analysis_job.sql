@@ -1,4 +1,5 @@
--- Fails an in-flight job and stores only an approved error code and message.
+-- Fails an in-flight job. Only an approved error code is stored; caller text
+-- is never persisted, so no arbitrary detail can leak through job queries.
 create or replace function fail_tender_analysis_job(p_failure jsonb)
 returns void as $$
 declare
@@ -45,7 +46,6 @@ begin
         claim_token = null,
         claim_expires_at = null,
         error_code = (p_failure->>'error_code'),
-        error_message = nullif(p_failure->>'error_message', ''),
         updated_at = current_timestamp
     where job_id = (p_failure->>'job_id')::uuid;
 end;
