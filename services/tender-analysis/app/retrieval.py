@@ -118,6 +118,37 @@ def _looks_like_toc(text: str) -> bool:
     return any(marker in text for marker in _TOC_MARKERS)
 
 
+def _high_in_priority_order(
+    chunks: list[DocumentChunk], scores: dict[str, int]
+) -> list[DocumentChunk]:
+    """Order high-scoring chunks by score, then round-robin across pages.
+
+    Round-robining within a score tier keeps a later-page chunk that ties with
+    many earlier-page chunks from being crowded out by a stable document-order
+    sort.
+    """
+    by_score: dict[int, list[DocumentChunk]] = {}
+    for chunk in chunks:
+        score = scores[chunk.chunk_id]
+        if score > 0:
+            by_score.setdefault(score, []).append(chunk)
+
+    ordered: list[DocumentChunk] = []
+    for score in sorted(by_score, reverse=True):
+        bucket = sorted(by_score[score], key=_chunk_key)
+        by_page: dict[int, list[DocumentChunk]] = {}
+        for chunk in bucket:
+            by_page.setdefault(chunk.page_number, []).append(chunk)
+        pages = sorted(by_page)
+        idx = 0
+        while any(idx < len(by_page[page]) for page in pages):
+            for page in pages:
+                if idx < len(by_page[page]):
+                    ordered.append(by_page[page][idx])
+            idx += 1
+    return ordered
+
+
 def retrieve_chunks(
     document: ParsedDocument,
     query_terms: Sequence[str],
@@ -147,11 +178,7 @@ def retrieve_chunks(
 
     intro_ids = {c.chunk_id for c in chunks if c.page_number <= 2 or _looks_like_toc(c.text)}
 
-    high_sorted = sorted(
-        (c for c in chunks if c.chunk_id in high_ids),
-        key=lambda c: scores[c.chunk_id],
-        reverse=True,
-    )
+    high_ordered = _high_in_priority_order(chunks, scores)
     neighbors = [c for c in chunks if c.chunk_id in neighbor_ids and c.chunk_id not in high_ids]
     intro = [
         c
@@ -168,7 +195,7 @@ def retrieve_chunks(
         selected.append(candidate)
         seen.add(candidate.chunk_id)
 
-    for chunk in high_sorted:
+    for chunk in high_ordered:
         add(chunk)
     for chunk in neighbors:
         add(chunk)

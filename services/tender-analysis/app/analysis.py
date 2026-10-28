@@ -169,52 +169,97 @@ _VALID_UNKNOWN_FIELDS = {
 }
 
 
+def _is_valid_conflict(citations: list[Citation], chunk_index: dict[str, DocumentChunk]) -> bool:
+    if not citations or not _all_citations_valid(citations, chunk_index):
+        return False
+    return len({c.chunk_id for c in citations}) >= 2
+
+
 def _validate_review_unknown(unknown: UnknownItem, chunk_index: dict[str, DocumentChunk]) -> bool:
     if unknown.field_name not in _VALID_UNKNOWN_FIELDS:
         return False
     if unknown.reason == "missing":
         return not unknown.citations or _all_citations_valid(unknown.citations, chunk_index)
     if unknown.reason == "conflict":
-        return bool(unknown.citations) and _all_citations_valid(unknown.citations, chunk_index)
+        return _is_valid_conflict(unknown.citations, chunk_index)
     return not unknown.citations or _all_citations_valid(unknown.citations, chunk_index)
 
 
-def _apply_review_action(action, pi_fields, qual_items, risk_items, material_items, unknowns):
-    if action.stage == "project_info":
-        if action.field is None or action.field not in pi_fields:
-            return
-        evidence = pi_fields[action.field]
-        if action.action == "demote":
-            unknowns.append(
-                UnknownItem(
-                    field_name=action.field,
-                    reason=action.demote_reason or "unsupported",
-                    detail=action.demote_detail,
-                    citations=[],
-                )
-            )
-        pi_fields[action.field] = EvidenceValue(
-            value=None, confidence=evidence.confidence, requires_review=True, citations=[]
-        )
-        return
+def _select_review_source_chunks(
+    project_info: ProjectInfo,
+    qualifications: list[Qualification],
+    risks: list[Risk],
+    materials: list[RequiredMaterial],
+    retrieved_chunks: list[DocumentChunk],
+    *,
+    max_chunks: int = 60,
+) -> list[DocumentChunk]:
+    """Cap review source chunks and prefer chunks already cited by conclusions."""
+    cited_ids: set[str] = set()
+    for field in ProjectInfo.model_fields:
+        for citation in getattr(project_info, field).citations:
+            cited_ids.add(citation.chunk_id)
+    for item in qualifications + risks + materials:
+        for citation in item.citations:
+            cited_ids.add(citation.chunk_id)
 
-    items = {
-        "qualifications": qual_items,
-        "risks": risk_items,
-        "materials": material_items,
-    }[action.stage]
-    if action.index is None or action.index >= len(items):
+    retrieved = _dedupe_chunks(retrieved_chunks)
+    cited = [c for c in retrieved if c.chunk_id in cited_ids]
+    others = [c for c in retrieved if c.chunk_id not in cited_ids]
+
+    selected = cited[:max_chunks]
+    for chunk in others:
+        if len(selected) >= max_chunks:
+            break
+        selected.append(chunk)
+    return sorted(selected, key=lambda c: (c.page_number, int(c.chunk_id.rsplit("-chunk-", 1)[1])))
+
+
+def _apply_pi_action(action, pi_fields, unknowns):
+    if action.field is None or action.field not in pi_fields:
         return
-    items.pop(action.index)
+    if action.action == "demote" and action.demote_reason == "conflict":
+        return  # conflict needs citations the action cannot carry
+    evidence = pi_fields[action.field]
     if action.action == "demote":
         unknowns.append(
             UnknownItem(
-                field_name=action.stage,
+                field_name=action.field,
                 reason=action.demote_reason or "unsupported",
                 detail=action.demote_detail,
                 citations=[],
             )
         )
+    pi_fields[action.field] = EvidenceValue(
+        value=None, confidence=evidence.confidence, requires_review=True, citations=[]
+    )
+
+
+def _apply_list_actions(actions, items, stage_name, unknowns):
+    drop_indices: set[int] = set()
+    demotes: dict[int, tuple[str, str]] = {}
+    for action in actions:
+        if action.index is None or action.index < 0 or action.index >= len(items):
+            continue
+        if action.action == "drop":
+            drop_indices.add(action.index)
+        elif action.action == "demote":
+            if action.demote_reason == "conflict":
+                continue
+            demotes[action.index] = (action.demote_reason or "unsupported", action.demote_detail)
+
+    kept = []
+    for index, item in enumerate(items):
+        if index in demotes:
+            reason, detail = demotes[index]
+            unknowns.append(
+                UnknownItem(field_name=stage_name, reason=reason, detail=detail, citations=[])
+            )
+            continue
+        if index in drop_indices:
+            continue
+        kept.append(item)
+    return kept
 
 
 # ── Orchestration ──────────────────────────────────────────────
@@ -250,7 +295,13 @@ async def analyze_document(
         MATERIALS_PROMPT, _build_context(material_chunks), MaterialList
     )
 
-    source_chunks = _dedupe_chunks(project_chunks + qual_chunks + risk_chunks + material_chunks)
+    source_chunks = _select_review_source_chunks(
+        project_info,
+        qualifications.items,
+        risks.items,
+        materials.items,
+        project_chunks + qual_chunks + risk_chunks + material_chunks,
+    )
     review = await provider.complete_structured(
         REVIEW_PROMPT,
         _build_review_context(
@@ -267,9 +318,24 @@ async def analyze_document(
     # Review unknowns must reference known fields/items and carry valid citations.
     unknowns = [u for u in review.unknowns if _validate_review_unknown(u, chunk_index)]
 
-    # Apply review actions highest-index-first so list pops do not shift earlier indices.
-    for action in sorted(review.actions, key=lambda a: a.index or 0, reverse=True):
-        _apply_review_action(action, pi_fields, qual_items, risk_items, material_items, unknowns)
+    # Apply review actions; indices are validated and deduplicated.
+    for action in (a for a in review.actions if a.stage == "project_info"):
+        _apply_pi_action(action, pi_fields, unknowns)
+    qual_items = _apply_list_actions(
+        [a for a in review.actions if a.stage == "qualifications"],
+        qual_items,
+        "qualifications",
+        unknowns,
+    )
+    risk_items = _apply_list_actions(
+        [a for a in review.actions if a.stage == "risks"], risk_items, "risks", unknowns
+    )
+    material_items = _apply_list_actions(
+        [a for a in review.actions if a.stage == "materials"],
+        material_items,
+        "materials",
+        unknowns,
+    )
 
     # Deterministic citation validation for confirmed project facts.
     for field in list(pi_fields):
@@ -280,9 +346,52 @@ async def analyze_document(
                 value=None, confidence=evidence.confidence, requires_review=True, citations=[]
             )
 
-    qual_items = _validate_list(qual_items, chunk_index, "qualification", unknowns)
-    risk_items = _validate_list(risk_items, chunk_index, "risk", unknowns)
-    material_items = _validate_list(material_items, chunk_index, "material", unknowns)
+    qual_items = _validate_list(qual_items, chunk_index, "qualifications", unknowns)
+    risk_items = _validate_list(risk_items, chunk_index, "risks", unknowns)
+    material_items = _validate_list(material_items, chunk_index, "materials", unknowns)
+
+    # A valid conflict demotes its project field to unconfirmed.
+    for unknown in unknowns:
+        if unknown.reason == "conflict" and unknown.field_name in pi_fields:
+            evidence = pi_fields[unknown.field_name]
+            if evidence.value is not None:
+                pi_fields[unknown.field_name] = EvidenceValue(
+                    value=None, confidence=evidence.confidence, requires_review=True, citations=[]
+                )
+
+    # Unconfirmed project fields become missing unknowns unless already conflicted.
+    for field, evidence in pi_fields.items():
+        if evidence.value is None and not any(
+            u.field_name == field and u.reason in ("missing", "conflict") for u in unknowns
+        ):
+            unknowns.append(
+                UnknownItem(
+                    field_name=field, reason="missing", detail="未在文件中确认", citations=[]
+                )
+            )
+
+    # A confirmed field cannot be reported missing or conflicted.
+    unknowns = [
+        u
+        for u in unknowns
+        if not (
+            u.reason in ("missing", "conflict")
+            and u.field_name in pi_fields
+            and pi_fields[u.field_name].value is not None
+        )
+    ]
+
+    # Category unknowns must relate to an actually-extracted category.
+    category_has_items = {
+        "qualifications": bool(qualifications.items),
+        "risks": bool(risks.items),
+        "materials": bool(materials.items),
+    }
+    unknowns = [
+        u
+        for u in unknowns
+        if u.field_name not in category_has_items or category_has_items[u.field_name]
+    ]
 
     meta = AnalysisMeta(
         model_provider=model_provider,

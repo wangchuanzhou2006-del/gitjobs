@@ -182,26 +182,6 @@ async def test_hard_and_scoring_qualifications_separated():
 
 
 @pytest.mark.anyio
-async def test_conflict_enters_unknowns():
-    """Review-reported conflicts must appear in unknowns."""
-    from app.analysis import ReviewResult, analyze_document
-
-    responses = _standard_responses()
-    responses["tender-review-v1"] = ReviewResult(
-        unknowns=[
-            UnknownItem(
-                field_name="budget_amount",
-                reason="conflict",
-                detail="两处原文金额不一致",
-                citations=[_cite(1, 1, "预算金额：人民币280万元")],
-            )
-        ]
-    )
-    report = await analyze_document(_DOC, FakeProvider(responses), "m")
-    assert any(u.reason == "conflict" for u in report.unknowns)
-
-
-@pytest.mark.anyio
 async def test_missing_fact_value_null_requires_review():
     """A missing project fact must surface as value=null and requires_review=True."""
     from app.analysis import analyze_document
@@ -514,3 +494,162 @@ async def test_risk_stage_receives_facts_and_sources():
     assert '"source_chunks"' in risk_payload
     assert "某市第三中学食堂承包服务项目" in risk_payload
     assert "page-1-chunk-0" in risk_payload
+
+
+# ── Correction 02: consistency and coverage ────────────────────
+
+
+@pytest.mark.anyio
+async def test_confirmed_field_not_reported_missing():
+    """A confirmed field must not also be reported missing."""
+    from app.analysis import ReviewResult, analyze_document
+
+    responses = _standard_responses()  # budget is confirmed
+    responses["tender-review-v1"] = ReviewResult(
+        unknowns=[
+            UnknownItem(field_name="budget_amount", reason="missing", detail="缺失", citations=[])
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+
+    assert report.project_info.budget_amount.value is not None
+    assert not any(
+        u.field_name == "budget_amount" and u.reason == "missing" for u in report.unknowns
+    )
+
+
+@pytest.mark.anyio
+async def test_conflict_with_single_citation_rejected():
+    """A single citation cannot prove a two-place conflict."""
+    from app.analysis import ReviewResult, analyze_document
+
+    responses = _standard_responses()
+    responses["tender-review-v1"] = ReviewResult(
+        unknowns=[
+            UnknownItem(
+                field_name="budget_amount",
+                reason="conflict",
+                detail="两处冲突",
+                citations=[_cite(1, 1, "预算金额：人民币280万元")],
+            )
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+
+    assert report.project_info.budget_amount.value is not None
+    assert not any(
+        u.field_name == "budget_amount" and u.reason == "conflict" for u in report.unknowns
+    )
+
+
+@pytest.mark.anyio
+async def test_conflict_with_two_distinct_citations_demotes_field():
+    """A two-chunk conflict must demote the project field to unconfirmed."""
+    from app.analysis import (
+        MaterialList,
+        QualificationList,
+        ReviewResult,
+        RiskList,
+        analyze_document,
+    )
+
+    doc = _doc([["预算金额：100万元", "预算金额：200万元"]])
+    responses = {
+        "tender-project-info-v1": ProjectInfo(
+            project_name=_missing(None),
+            procurement_entity=_missing(None),
+            budget_amount=EvidenceValue(
+                value="100万元",
+                confidence=0.9,
+                requires_review=False,
+                citations=[_cite(1, 0, "预算金额：100万元")],
+            ),
+            budget_currency=_missing(None),
+            service_period=_missing(None),
+            bid_deadline=_missing(None),
+        ),
+        "tender-qualifications-v1": QualificationList(items=[]),
+        "tender-risks-v1": RiskList(items=[]),
+        "tender-materials-v1": MaterialList(items=[]),
+        "tender-review-v1": ReviewResult(
+            unknowns=[
+                UnknownItem(
+                    field_name="budget_amount",
+                    reason="conflict",
+                    detail="两处预算金额不一致",
+                    citations=[
+                        _cite(1, 0, "预算金额：100万元"),
+                        _cite(1, 1, "预算金额：200万元"),
+                    ],
+                )
+            ]
+        ),
+    }
+    report = await analyze_document(doc, FakeProvider(responses), "m")
+
+    assert report.project_info.budget_amount.value is None
+    assert any(u.field_name == "budget_amount" and u.reason == "conflict" for u in report.unknowns)
+
+
+@pytest.mark.anyio
+async def test_missing_facts_enter_unknowns_and_partial():
+    """value=None project fields must become missing unknowns and set partial."""
+    from app.analysis import analyze_document
+
+    report = await analyze_document(_DOC, FakeProvider(_standard_responses()), "m")
+    missing_fields = {u.field_name for u in report.unknowns if u.reason == "missing"}
+    assert {
+        "procurement_entity",
+        "budget_currency",
+        "service_period",
+        "bid_deadline",
+    } <= missing_fields
+    assert report.analysis_meta.completeness == "partial"
+
+
+@pytest.mark.anyio
+async def test_review_action_conflict_demote_ignored():
+    """A review demote action claiming conflict cannot bypass the citation rule."""
+    from app.analysis import ReviewAction, ReviewResult, analyze_document
+
+    responses = _standard_responses()
+    responses["tender-review-v1"] = ReviewResult(
+        actions=[
+            ReviewAction(
+                stage="project_info",
+                field="budget_amount",
+                action="demote",
+                demote_reason="conflict",
+                demote_detail="两处冲突",
+            )
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+
+    assert report.project_info.budget_amount.value is not None
+    assert not any(
+        u.field_name == "budget_amount" and u.reason == "conflict" for u in report.unknowns
+    )
+
+
+@pytest.mark.anyio
+async def test_review_source_chunks_capped():
+    """Review source_chunks must be independently capped at 60."""
+    from app.analysis import analyze_document
+
+    pages = []
+    for i in range(50):
+        pages.append([f"项目名称：项目{i}"])
+    for i in range(50):
+        pages.append([f"资格要求{i}"])
+    for i in range(50):
+        pages.append([f"风险条款{i}"])
+    for i in range(50):
+        pages.append([f"提供材料{i}"])
+    doc = _doc(pages)
+
+    provider = FakeProvider(_standard_responses())
+    await analyze_document(doc, provider, "m")
+    review_payload = next(p for v, p in provider.payloads if v == "tender-review-v1")
+    data = json.loads(review_payload)
+    assert len(data["source_chunks"]) <= 60

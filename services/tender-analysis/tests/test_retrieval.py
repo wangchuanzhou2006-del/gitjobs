@@ -90,3 +90,13 @@ def test_high_relevance_later_page_not_crowded_by_intro():
     assert len(result) <= 60
     assert any("预算金额" in c.text for c in result)
     assert any(c.page_number == 3 for c in result)
+
+
+def test_same_score_pages_not_crowded():
+    """Tied high-score chunks across pages must not be crowded out by pages 1-2."""
+    from app.retrieval import retrieve_chunks
+
+    doc = _doc([["预算金额"] * 30, ["预算金额"] * 30, ["预算金额"]])
+    result = retrieve_chunks(doc, ["预算金额"])
+    assert len(result) <= 60
+    assert any(c.page_number == 3 for c in result)
