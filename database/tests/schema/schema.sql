@@ -3,7 +3,7 @@
 -- ============================================================================
 
 begin;
-select plan(218);
+select plan(244);
 
 create function test_has_foreign_key(
     child_table text,
@@ -641,6 +641,75 @@ select has_check('talent_source_subscriptions', 'talent_source_subscriptions_int
 select has_check('talent_source_subscriptions', 'talent_source_subscriptions_keywords_check');
 select has_check('talent_source_subscriptions', 'talent_source_subscriptions_public_url_check');
 select has_check('talent_source_seen_items', 'talent_source_seen_items_content_fingerprint_check');
+
+-- Test: tender analysis tables exist
+select has_table('tender_projects');
+select has_table('tender_documents');
+select has_table('tender_analysis_jobs');
+select has_table('tender_analysis_reports');
+
+select columns_are('tender_projects', array[
+    'project_id', 'user_id', 'title', 'source_url', 'created_at', 'updated_at'
+]);
+
+select columns_are('tender_documents', array[
+    'document_id', 'project_id', 'storage_key', 'sha256', 'size_bytes',
+    'filename', 'uploaded_at'
+]);
+
+select columns_are('tender_analysis_jobs', array[
+    'job_id', 'document_id', 'analysis_config_hash', 'status', 'claim_token',
+    'claim_version', 'claim_expires_at', 'attempt_count', 'error_code',
+    'error_message', 'model_provider', 'model_name', 'prompt_version',
+    'created_at', 'updated_at', 'completed_at'
+]);
+
+select columns_are('tender_analysis_reports', array[
+    'report_id', 'job_id', 'document_id', 'analysis_config_hash', 'result',
+    'contract_version', 'created_at'
+]);
+
+select has_pk('tender_projects');
+select has_pk('tender_documents');
+select has_pk('tender_analysis_jobs');
+select has_pk('tender_analysis_reports');
+
+select ok(test_has_foreign_key('tender_projects', 'user_id', 'user', 'user_id', 'c'), 'tender_projects.user_id should delete cascade');
+select ok(test_has_foreign_key('tender_documents', 'project_id', 'tender_projects', 'project_id', 'c'), 'tender_documents.project_id should delete cascade');
+select ok(test_has_foreign_key('tender_analysis_jobs', 'document_id', 'tender_documents', 'document_id', 'c'), 'tender_analysis_jobs.document_id should delete cascade');
+select ok(test_has_foreign_key('tender_analysis_reports', 'job_id', 'tender_analysis_jobs', 'job_id', 'c'), 'tender_analysis_reports.job_id should delete cascade');
+select ok(test_has_foreign_key('tender_analysis_reports', 'document_id', 'tender_documents', 'document_id', 'c'), 'tender_analysis_reports.document_id should delete cascade');
+
+select has_check('tender_documents', 'tender_documents_sha256_check');
+select has_check('tender_documents', 'tender_documents_size_bytes_check');
+select has_check('tender_documents', 'tender_documents_storage_key_check');
+select has_check('tender_analysis_jobs', 'tender_analysis_jobs_status_check');
+select has_check('tender_analysis_reports', 'tender_analysis_reports_contract_version_check');
+select has_check('tender_analysis_reports', 'tender_analysis_reports_result_check');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'tender_analysis_jobs_active_config_idx'
+      and index_definition.indisunique
+), 'tender_analysis_jobs_active_config_idx should be a unique partial index');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'tender_analysis_reports_document_config_idx'
+      and index_definition.indisunique
+), 'tender_analysis_reports_document_config_idx should be unique');
+
+select ok(exists (
+    select 1
+    from pg_index index_definition
+    join pg_class index_relation on index_relation.oid = index_definition.indexrelid
+    where index_relation.relname = 'tender_documents_project_sha256_idx'
+      and index_definition.indisunique
+), 'tender_documents_project_sha256_idx should be unique');
 
 -- ============================================================================
 -- CLEANUP

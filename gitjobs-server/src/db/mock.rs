@@ -422,6 +422,47 @@ mock! {
     }
 
     #[async_trait]
+    impl crate::db::tender::DBTender for DB {
+        async fn create_tender_project(
+            &self,
+            input: crate::db::tender::NewTenderProject,
+        ) -> Result<Uuid>;
+        async fn create_tender_document_job(
+            &self,
+            input: crate::db::tender::NewTenderDocumentJob,
+        ) -> Result<crate::db::tender::CreateJobOutcome>;
+        async fn claim_tender_analysis_job(
+            &self,
+        ) -> Result<Option<crate::db::tender::ClaimedTenderJob>>;
+        async fn transition_tender_analysis_job(
+            &self,
+            input: crate::db::tender::TenderJobTransition,
+        ) -> Result<()>;
+        async fn complete_tender_analysis_job(
+            &self,
+            input: crate::db::tender::CompletedTenderJob,
+        ) -> Result<Uuid>;
+        async fn fail_tender_analysis_job(
+            &self,
+            input: crate::db::tender::FailedTenderJob,
+        ) -> Result<()>;
+        async fn get_tender_analysis_job(
+            &self,
+            user_id: Uuid,
+            job_id: Uuid,
+        ) -> Result<Option<crate::db::tender::TenderJobView>>;
+        async fn list_tender_projects(
+            &self,
+            user_id: Uuid,
+        ) -> Result<Vec<crate::db::tender::TenderProjectRow>>;
+        async fn get_tender_report(
+            &self,
+            user_id: Uuid,
+            report_id: Uuid,
+        ) -> Result<Option<crate::db::tender::TenderReportRow>>;
+    }
+
+    #[async_trait]
     impl crate::db::workers::DBWorkers for DB {
         async fn archive_expired_jobs(&self) -> Result<()>;
     }

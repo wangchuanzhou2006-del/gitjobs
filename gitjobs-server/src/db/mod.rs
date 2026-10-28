@@ -14,6 +14,7 @@ use jobboard::DBJobBoard;
 use misc::DBMisc;
 use notifications::DBNotifications;
 use talent::DBTalent;
+use tender::DBTender;
 use tokio::sync::RwLock;
 use tokio::{select, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -31,6 +32,7 @@ pub(crate) mod misc;
 pub(crate) mod mock;
 pub(crate) mod notifications;
 pub(crate) mod talent;
+pub(crate) mod tender;
 pub(crate) mod workers;
 
 /// Error message when a transaction client is not found.
@@ -45,7 +47,16 @@ const TXS_CLIENT_TIMEOUT: TimeDelta = TimeDelta::seconds(30);
 /// Abstraction layer over the database. Defines required operations for a DB implementation.
 #[async_trait]
 pub(crate) trait DB:
-    DBJobBoard + DBDashBoard + DBAuth + DBImage + DBNotifications + DBWorkers + DBEventTracker + DBMisc + DBTalent
+    DBJobBoard
+    + DBDashBoard
+    + DBAuth
+    + DBImage
+    + DBNotifications
+    + DBWorkers
+    + DBEventTracker
+    + DBMisc
+    + DBTalent
+    + DBTender
 {
     /// Begins a new transaction and returns a unique client identifier.
     async fn tx_begin(&self) -> Result<Uuid>;
