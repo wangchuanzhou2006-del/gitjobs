@@ -852,6 +852,37 @@ def test_material_without_citation_rejected_by_jsonschema():
         jsonschema.validate(payload, schema)
 
 
+def test_evidence_non_null_empty_citations_rejected_by_both():
+    """A confirmed EvidenceValue with empty citations must fail Pydantic and jsonschema."""
+    import jsonschema
+
+    from app.contracts import TenderAnalysisV1, generate_tender_analysis_schema
+
+    payload = _load_fixture()
+    payload["project_info"]["project_name"]["citations"] = []
+
+    with pytest.raises(ValidationError):
+        TenderAnalysisV1.model_validate(payload)
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, generate_tender_analysis_schema())
+
+
+def test_evidence_null_empty_citations_accepted_by_both():
+    """An unconfirmed EvidenceValue with empty citations must pass both validators."""
+    import jsonschema
+
+    from app.contracts import TenderAnalysisV1, generate_tender_analysis_schema
+
+    payload = _load_fixture()
+    payload["project_info"]["project_name"]["value"] = None
+    payload["project_info"]["project_name"]["requires_review"] = True
+    payload["project_info"]["project_name"]["citations"] = []
+
+    TenderAnalysisV1.model_validate(payload)
+    jsonschema.validate(payload, generate_tender_analysis_schema())
+
+
 def test_wrong_prompt_version_rejected_by_jsonschema():
     """jsonschema must reject arbitrary prompt version strings."""
     import jsonschema

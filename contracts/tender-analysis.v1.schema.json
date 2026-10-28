@@ -107,7 +107,30 @@
         "citations"
       ],
       "title": "EvidenceValue",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "value"
+            ]
+          },
+          "then": {
+            "properties": {
+              "citations": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "ProjectInfo": {
       "additionalProperties": false,
