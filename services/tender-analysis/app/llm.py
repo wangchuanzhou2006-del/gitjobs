@@ -37,7 +37,10 @@ class LiteLlmProvider:
     async def complete_structured(
         self, system_prompt: str, user_payload: str, response_model: type[T]
     ) -> T:
-        import litellm  # lazy import so tests never touch litellm unless needed
+        try:
+            import litellm  # lazy import so tests never touch litellm unless needed
+        except Exception:
+            raise AnalysisError("analysis_unavailable")
 
         api_key = None
         if self.api_key is not None:

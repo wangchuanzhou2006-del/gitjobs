@@ -29,7 +29,7 @@ from app.prompts import (
     REVIEW_PROMPT,
     RISKS_PROMPT,
 )
-from app.retrieval import QUERY_PACKS, retrieve_chunks
+from app.retrieval import QUERY_PACKS, order_by_relevance, retrieve_chunks
 
 # ── Intermediate extraction/review models ──────────────────────
 
@@ -207,8 +207,11 @@ def _select_review_source_chunks(
     cited = [c for c in retrieved if c.chunk_id in cited_ids]
     others = [c for c in retrieved if c.chunk_id not in cited_ids]
 
+    all_terms = sorted({term for terms in QUERY_PACKS.values() for term in terms})
+    others_ordered = order_by_relevance(others, all_terms)
+
     selected = cited[:max_chunks]
-    for chunk in others:
+    for chunk in others_ordered:
         if len(selected) >= max_chunks:
             break
         selected.append(chunk)

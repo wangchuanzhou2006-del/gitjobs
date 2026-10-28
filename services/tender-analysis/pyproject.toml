@@ -11,6 +11,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "pymupdf>=1.24.0",
     "litellm>=1.40.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

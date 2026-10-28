@@ -149,6 +149,16 @@ def _high_in_priority_order(
     return ordered
 
 
+def order_by_relevance(
+    chunks: list[DocumentChunk], query_terms: Sequence[str]
+) -> list[DocumentChunk]:
+    """Order chunks by score desc with page round-robin; zero-score last in doc order."""
+    scores = {c.chunk_id: _score(c, query_terms) for c in chunks}
+    high = [c for c in chunks if scores[c.chunk_id] > 0]
+    low = sorted((c for c in chunks if scores[c.chunk_id] <= 0), key=_chunk_key)
+    return _high_in_priority_order(high, scores) + low
+
+
 def retrieve_chunks(
     document: ParsedDocument,
     query_terms: Sequence[str],

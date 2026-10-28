@@ -653,3 +653,49 @@ async def test_review_source_chunks_capped():
     review_payload = next(p for v, p in provider.payloads if v == "tender-review-v1")
     data = json.loads(review_payload)
     assert len(data["source_chunks"]) <= 60
+
+
+@pytest.mark.anyio
+async def test_review_source_chunks_keeps_later_page_relevance():
+    """Review source_chunks must not crowd out a later-page high-relevance clause."""
+    from app.analysis import analyze_document
+
+    doc = _doc([["提交材料"] * 30, ["提交材料"] * 30, ["预算金额 投标截止时间"]])
+    provider = FakeProvider(_standard_responses())
+    await analyze_document(doc, provider, "m")
+    review_payload = next(p for v, p in provider.payloads if v == "tender-review-v1")
+    data = json.loads(review_payload)
+    ids = {c["chunk_id"] for c in data["source_chunks"]}
+    assert len(ids) <= 60
+    assert "page-3-chunk-0" in ids
+
+
+@pytest.mark.anyio
+async def test_litellm_import_failure_maps_to_safe_code(monkeypatch):
+    """A failed lazy litellm import must become a fixed safe code."""
+    import builtins
+    import sys
+
+    from pydantic import BaseModel
+
+    from app.llm import AnalysisError, LiteLlmProvider
+
+    class R(BaseModel):
+        x: int
+
+    monkeypatch.delitem(sys.modules, "litellm", raising=False)
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "litellm":
+            raise ImportError("No module named 'yaml'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    provider = LiteLlmProvider(model="openai/gpt-4o")
+    with pytest.raises(AnalysisError) as exc:
+        await provider.complete_structured("sys", "user", R)
+
+    assert exc.value.code == "analysis_unavailable"
+    assert "yaml" not in str(exc.value)
