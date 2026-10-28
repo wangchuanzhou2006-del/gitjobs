@@ -62,10 +62,12 @@ class FakeProvider:
     def __init__(self, responses: dict[str, object]):
         self.responses = responses
         self.calls: list[str] = []
+        self.payloads: list[tuple[str, str]] = []
 
     async def complete_structured(self, system_prompt, user_payload, response_model):
         version = system_prompt.splitlines()[0].strip()
         self.calls.append(version)
+        self.payloads.append((version, user_payload))
         return self.responses[version]
 
 
@@ -188,10 +190,10 @@ async def test_conflict_enters_unknowns():
     responses["tender-review-v1"] = ReviewResult(
         unknowns=[
             UnknownItem(
-                field_name="预算金额",
+                field_name="budget_amount",
                 reason="conflict",
                 detail="两处原文金额不一致",
-                citations=[],
+                citations=[_cite(1, 1, "预算金额：人民币280万元")],
             )
         ]
     )
@@ -249,7 +251,7 @@ async def test_review_cannot_add_new_facts():
     responses = _standard_responses()
     responses["tender-review-v1"] = ReviewResult(
         unknowns=[
-            UnknownItem(field_name="联合体投标", reason="missing", detail="未说明", citations=[])
+            UnknownItem(field_name="budget_amount", reason="missing", detail="未说明", citations=[])
         ]
     )
     report = await analyze_document(_DOC, FakeProvider(responses), "m")
@@ -379,3 +381,136 @@ async def test_analyze_valid_request_succeeds(auth_env, monkeypatch):
     report = TenderAnalysisV1.model_validate(response.json())
     assert report.schema_version == "tender-analysis.v1"
     assert report.analysis_meta.contract_version == "tender-analysis.v1"
+
+
+# ── Correction 01: evidence boundary ───────────────────────────
+
+
+@pytest.mark.anyio
+async def test_any_invalid_citation_demotes_whole_item():
+    """One invalid citation must demote the whole item, not keep the valid one."""
+    from app.analysis import QualificationList, analyze_document
+
+    responses = _standard_responses()
+    responses["tender-qualifications-v1"] = QualificationList(
+        items=[
+            Qualification(
+                kind="hard_qualification",
+                requirement="投标人须具有有效的食品经营许可证",
+                original_text="投标人须具有有效的食品经营许可证",
+                confidence=0.95,
+                requires_review=False,
+                citations=[
+                    _cite(1, 2, "投标人须具有有效的食品经营许可证"),
+                    _cite(99, 0, "投标人须具有有效的食品经营许可证"),
+                ],
+            )
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+
+    assert report.qualifications == []
+    assert any(u.reason == "unsupported" for u in report.unknowns)
+    assert all(u.citations == [] for u in report.unknowns)
+
+
+@pytest.mark.anyio
+async def test_review_unknown_invented_field_dropped():
+    """A review unknown with an invented field_name must be dropped."""
+    from app.analysis import ReviewResult, analyze_document
+
+    responses = _standard_responses()
+    responses["tender-review-v1"] = ReviewResult(
+        unknowns=[
+            UnknownItem(
+                field_name="invented",
+                reason="conflict",
+                detail="虚构内容",
+                citations=[_cite(99, 0, "不存在")],
+            )
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+    assert not any(u.field_name == "invented" for u in report.unknowns)
+
+
+@pytest.mark.anyio
+async def test_conflict_unknown_with_invalid_citation_dropped():
+    """A conflict unknown must carry a valid, verifiable citation."""
+    from app.analysis import ReviewResult, analyze_document
+
+    responses = _standard_responses()
+    responses["tender-review-v1"] = ReviewResult(
+        unknowns=[
+            UnknownItem(
+                field_name="budget_amount",
+                reason="conflict",
+                detail="两处金额不一致",
+                citations=[_cite(99, 0, "不存在")],
+            )
+        ]
+    )
+    report = await analyze_document(_DOC, FakeProvider(responses), "m")
+    assert not any(
+        u.field_name == "budget_amount" and u.reason == "conflict" for u in report.unknowns
+    )
+
+
+@pytest.mark.anyio
+async def test_analyze_illegal_utf8_returns_400(auth_env):
+    """Illegal UTF-8 in the analyze body must return a fixed 400."""
+    transport, token = auth_env
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/internal/v1/analyze",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            content=b"\xff",
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_request"
+
+
+@pytest.mark.anyio
+async def test_assembly_overflow_returns_safe_code():
+    """Report assembly exceeding contract limits must map to a safe code."""
+    from app.analysis import QualificationList, ReviewResult, analyze_document
+    from app.llm import AnalysisError
+
+    responses = _standard_responses()
+    responses["tender-qualifications-v1"] = QualificationList(
+        items=[
+            Qualification(
+                kind="hard_qualification",
+                requirement=f"要求{i}",
+                original_text=f"要求{i}",
+                confidence=0.9,
+                requires_review=False,
+                citations=[_cite(99, 0, "不存在")],
+            )
+            for i in range(200)
+        ]
+    )
+    responses["tender-review-v1"] = ReviewResult(
+        unknowns=[
+            UnknownItem(field_name="budget_amount", reason="missing", detail="未说明", citations=[])
+        ]
+    )
+    with pytest.raises(AnalysisError) as exc:
+        await analyze_document(_DOC, FakeProvider(responses), "m")
+    assert exc.value.code == "analysis_unavailable"
+
+
+@pytest.mark.anyio
+async def test_risk_stage_receives_facts_and_sources():
+    """The risk stage must receive extracted facts and their source chunks."""
+    from app.analysis import analyze_document
+
+    provider = FakeProvider(_standard_responses())
+    await analyze_document(_DOC, provider, "m")
+
+    risk_payload = next(p for v, p in provider.payloads if v == "tender-risks-v1")
+    assert '"project_info"' in risk_payload
+    assert '"qualifications"' in risk_payload
+    assert '"source_chunks"' in risk_payload
+    assert "某市第三中学食堂承包服务项目" in risk_payload
+    assert "page-1-chunk-0" in risk_payload

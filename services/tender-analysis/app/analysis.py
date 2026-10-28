@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.contracts import (
     AnalysisMeta,
@@ -21,7 +21,7 @@ from app.contracts import (
     TenderAnalysisV1,
     UnknownItem,
 )
-from app.llm import LlmProvider
+from app.llm import AnalysisError, LlmProvider
 from app.prompts import (
     MATERIALS_PROMPT,
     PROJECT_INFO_PROMPT,
@@ -77,11 +77,41 @@ def _build_context(chunks: list[DocumentChunk]) -> str:
     return "\n\n".join(f"[{c.chunk_id} | page {c.page_number}]\n{c.text}" for c in chunks)
 
 
+def _dedupe_chunks(chunks: list[DocumentChunk]) -> list[DocumentChunk]:
+    seen: dict[str, DocumentChunk] = {}
+    for chunk in chunks:
+        seen.setdefault(chunk.chunk_id, chunk)
+    return sorted(
+        seen.values(),
+        key=lambda c: (c.page_number, int(c.chunk_id.rsplit("-chunk-", 1)[1])),
+    )
+
+
+def _source_chunk_view(chunks: list[DocumentChunk]) -> list[dict]:
+    return [{"chunk_id": c.chunk_id, "page_number": c.page_number, "text": c.text} for c in chunks]
+
+
+def _build_risk_context(
+    project_info: ProjectInfo,
+    qualifications: list[Qualification],
+    risk_chunks: list[DocumentChunk],
+) -> str:
+    return json.dumps(
+        {
+            "project_info": project_info.model_dump(),
+            "qualifications": [q.model_dump() for q in qualifications],
+            "source_chunks": _source_chunk_view(risk_chunks),
+        },
+        ensure_ascii=False,
+    )
+
+
 def _build_review_context(
     project_info: ProjectInfo,
     qualifications: list[Qualification],
     risks: list[Risk],
     materials: list[RequiredMaterial],
+    source_chunks: list[DocumentChunk],
 ) -> str:
     return json.dumps(
         {
@@ -89,41 +119,64 @@ def _build_review_context(
             "qualifications": [q.model_dump() for q in qualifications],
             "risks": [r.model_dump() for r in risks],
             "materials": [m.model_dump() for m in materials],
+            "source_chunks": _source_chunk_view(source_chunks),
         },
         ensure_ascii=False,
     )
 
 
-def _has_valid_citation(citations: list[Citation], chunk_index: dict[str, DocumentChunk]) -> bool:
+def _all_citations_valid(citations: list[Citation], chunk_index: dict[str, DocumentChunk]) -> bool:
     for citation in citations:
         chunk = chunk_index.get(citation.chunk_id)
         if chunk is None:
-            continue
+            return False
         if chunk.page_number != citation.page_number:
-            continue
+            return False
         if citation.quote not in chunk.text:
-            continue
-        return True
-    return False
+            return False
+    return True
 
 
-def _unknown_for_item(field_name: str, item) -> UnknownItem:
+def _unknown_for_item(field_name: str) -> UnknownItem:
     return UnknownItem(
         field_name=field_name,
         reason="unsupported",
         detail="结论引用无效或缺失",
-        citations=item.citations,
+        citations=[],
     )
 
 
 def _validate_list(items, chunk_index, field_prefix, unknowns):
     kept = []
     for item in items:
-        if _has_valid_citation(item.citations, chunk_index):
+        if _all_citations_valid(item.citations, chunk_index):
             kept.append(item)
         else:
-            unknowns.append(_unknown_for_item(field_prefix, item))
+            unknowns.append(_unknown_for_item(field_prefix))
     return kept
+
+
+_VALID_UNKNOWN_FIELDS = {
+    "project_name",
+    "procurement_entity",
+    "budget_amount",
+    "budget_currency",
+    "service_period",
+    "bid_deadline",
+    "qualifications",
+    "risks",
+    "materials",
+}
+
+
+def _validate_review_unknown(unknown: UnknownItem, chunk_index: dict[str, DocumentChunk]) -> bool:
+    if unknown.field_name not in _VALID_UNKNOWN_FIELDS:
+        return False
+    if unknown.reason == "missing":
+        return not unknown.citations or _all_citations_valid(unknown.citations, chunk_index)
+    if unknown.reason == "conflict":
+        return bool(unknown.citations) and _all_citations_valid(unknown.citations, chunk_index)
+    return not unknown.citations or _all_citations_valid(unknown.citations, chunk_index)
 
 
 def _apply_review_action(action, pi_fields, qual_items, risk_items, material_items, unknowns):
@@ -137,7 +190,7 @@ def _apply_review_action(action, pi_fields, qual_items, risk_items, material_ite
                     field_name=action.field,
                     reason=action.demote_reason or "unsupported",
                     detail=action.demote_detail,
-                    citations=evidence.citations,
+                    citations=[],
                 )
             )
         pi_fields[action.field] = EvidenceValue(
@@ -152,14 +205,14 @@ def _apply_review_action(action, pi_fields, qual_items, risk_items, material_ite
     }[action.stage]
     if action.index is None or action.index >= len(items):
         return
-    item = items.pop(action.index)
+    items.pop(action.index)
     if action.action == "demote":
         unknowns.append(
             UnknownItem(
                 field_name=action.stage,
                 reason=action.demote_reason or "unsupported",
                 detail=action.demote_detail,
-                citations=item.citations,
+                citations=[],
             )
         )
 
@@ -177,29 +230,32 @@ async def analyze_document(
     """Run the four extraction stages, review, and evidence validation."""
     chunk_index = {c.chunk_id: c for page in document.pages for c in page.chunks}
 
+    project_chunks = retrieve_chunks(document, QUERY_PACKS["project_info"])
+    qual_chunks = retrieve_chunks(document, QUERY_PACKS["qualifications"])
+    risk_chunks = retrieve_chunks(document, QUERY_PACKS["risks"])
+    material_chunks = retrieve_chunks(document, QUERY_PACKS["materials"])
+
     project_info = await provider.complete_structured(
-        PROJECT_INFO_PROMPT,
-        _build_context(retrieve_chunks(document, QUERY_PACKS["project_info"])),
-        ProjectInfo,
+        PROJECT_INFO_PROMPT, _build_context(project_chunks), ProjectInfo
     )
     qualifications = await provider.complete_structured(
-        QUALIFICATIONS_PROMPT,
-        _build_context(retrieve_chunks(document, QUERY_PACKS["qualifications"])),
-        QualificationList,
+        QUALIFICATIONS_PROMPT, _build_context(qual_chunks), QualificationList
     )
     risks = await provider.complete_structured(
         RISKS_PROMPT,
-        _build_context(retrieve_chunks(document, QUERY_PACKS["risks"])),
+        _build_risk_context(project_info, qualifications.items, risk_chunks),
         RiskList,
     )
     materials = await provider.complete_structured(
-        MATERIALS_PROMPT,
-        _build_context(retrieve_chunks(document, QUERY_PACKS["materials"])),
-        MaterialList,
+        MATERIALS_PROMPT, _build_context(material_chunks), MaterialList
     )
+
+    source_chunks = _dedupe_chunks(project_chunks + qual_chunks + risk_chunks + material_chunks)
     review = await provider.complete_structured(
         REVIEW_PROMPT,
-        _build_review_context(project_info, qualifications.items, risks.items, materials.items),
+        _build_review_context(
+            project_info, qualifications.items, risks.items, materials.items, source_chunks
+        ),
         ReviewResult,
     )
 
@@ -207,7 +263,9 @@ async def analyze_document(
     qual_items = list(qualifications.items)
     risk_items = list(risks.items)
     material_items = list(materials.items)
-    unknowns = list(review.unknowns)
+
+    # Review unknowns must reference known fields/items and carry valid citations.
+    unknowns = [u for u in review.unknowns if _validate_review_unknown(u, chunk_index)]
 
     # Apply review actions highest-index-first so list pops do not shift earlier indices.
     for action in sorted(review.actions, key=lambda a: a.index or 0, reverse=True):
@@ -216,8 +274,8 @@ async def analyze_document(
     # Deterministic citation validation for confirmed project facts.
     for field in list(pi_fields):
         evidence = pi_fields[field]
-        if evidence.value is not None and not _has_valid_citation(evidence.citations, chunk_index):
-            unknowns.append(_unknown_for_item(field, evidence))
+        if evidence.value is not None and not _all_citations_valid(evidence.citations, chunk_index):
+            unknowns.append(_unknown_for_item(field))
             pi_fields[field] = EvidenceValue(
                 value=None, confidence=evidence.confidence, requires_review=True, citations=[]
             )
@@ -240,12 +298,15 @@ async def analyze_document(
         completeness="complete" if not unknowns else "partial",
     )
 
-    return TenderAnalysisV1(
-        schema_version="tender-analysis.v1",
-        project_info=ProjectInfo(**pi_fields),
-        qualifications=qual_items,
-        risks=risk_items,
-        required_materials=material_items,
-        unknowns=unknowns,
-        analysis_meta=meta,
-    )
+    try:
+        return TenderAnalysisV1(
+            schema_version="tender-analysis.v1",
+            project_info=ProjectInfo(**pi_fields),
+            qualifications=qual_items,
+            risks=risk_items,
+            required_materials=material_items,
+            unknowns=unknowns,
+            analysis_meta=meta,
+        )
+    except ValidationError:
+        raise AnalysisError("analysis_unavailable")

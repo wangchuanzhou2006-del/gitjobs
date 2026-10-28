@@ -242,7 +242,12 @@ async def analyze_document(
         return _error(413, "request_too_large")
 
     try:
-        payload = json.loads(data)
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return _error(400, "invalid_request")
+
+    try:
+        payload = json.loads(text)
         analyze_request = AnalyzeRequest.model_validate(payload)
     except (json.JSONDecodeError, ValidationError):
         return _error(400, "invalid_request")

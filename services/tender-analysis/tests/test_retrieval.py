@@ -79,3 +79,14 @@ def test_includes_toc_chunk():
     result = retrieve_chunks(doc, ["项目名称"])
     ids = {c.chunk_id for c in result}
     assert "page-1-chunk-0" in ids
+
+
+def test_high_relevance_later_page_not_crowded_by_intro():
+    """70 intro chunks plus a high-score page-3 chunk must keep the page-3 chunk."""
+    from app.retrieval import retrieve_chunks
+
+    doc = _doc([["普通内容"] * 35, ["普通内容"] * 35, ["预算金额：100万元"]])
+    result = retrieve_chunks(doc, ["预算金额"])
+    assert len(result) <= 60
+    assert any("预算金额" in c.text for c in result)
+    assert any(c.page_number == 3 for c in result)

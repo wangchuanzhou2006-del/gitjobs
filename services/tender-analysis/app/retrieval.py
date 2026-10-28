@@ -124,7 +124,12 @@ def retrieve_chunks(
     *,
     max_chunks: int = MAX_CHUNKS,
 ) -> list[DocumentChunk]:
-    """Return up to ``max_chunks`` chunks, always in document order."""
+    """Return up to ``max_chunks`` chunks, always in document order.
+
+    High-scoring chunks are selected first (so later-page clauses are never
+    crowded out), then their neighbors, then a bounded, representative slice of
+    the first two pages and table-of-contents chunks fills any remaining quota.
+    """
     chunks = [c for page in document.pages for c in page.chunks]
     if not chunks:
         return []
@@ -140,22 +145,35 @@ def retrieve_chunks(
             if i + 1 < len(chunks):
                 neighbor_ids.add(chunks[i + 1].chunk_id)
 
+    intro_ids = {c.chunk_id for c in chunks if c.page_number <= 2 or _looks_like_toc(c.text)}
+
+    high_sorted = sorted(
+        (c for c in chunks if c.chunk_id in high_ids),
+        key=lambda c: scores[c.chunk_id],
+        reverse=True,
+    )
+    neighbors = [c for c in chunks if c.chunk_id in neighbor_ids and c.chunk_id not in high_ids]
+    intro = [
+        c
+        for c in chunks
+        if c.chunk_id in intro_ids and c.chunk_id not in high_ids and c.chunk_id not in neighbor_ids
+    ]
+
     selected: list[DocumentChunk] = []
     seen: set[str] = set()
-    for chunk in chunks:
-        if chunk.page_number <= 2 or _looks_like_toc(chunk.text):
-            selected.append(chunk)
-            seen.add(chunk.chunk_id)
 
-    by_score = sorted(chunks, key=lambda c: scores[c.chunk_id], reverse=True)
-    for chunk in by_score:
-        if len(selected) >= max_chunks:
-            break
-        if chunk.chunk_id in seen:
-            continue
-        if chunk.chunk_id in high_ids or chunk.chunk_id in neighbor_ids:
-            selected.append(chunk)
-            seen.add(chunk.chunk_id)
+    def add(candidate: DocumentChunk) -> None:
+        if len(selected) >= max_chunks or candidate.chunk_id in seen:
+            return
+        selected.append(candidate)
+        seen.add(candidate.chunk_id)
+
+    for chunk in high_sorted:
+        add(chunk)
+    for chunk in neighbors:
+        add(chunk)
+    for chunk in intro:
+        add(chunk)
 
     selected.sort(key=_chunk_key)
     return selected[:max_chunks]
