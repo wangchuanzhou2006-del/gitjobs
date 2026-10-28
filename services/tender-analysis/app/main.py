@@ -1,22 +1,27 @@
 """FastAPI application — internal tender analysis service.
 
 No CORS, no user auth, no database.  Only internal Bearer-authenticated
-endpoints: parse streams the upload after auth; analyze remains a 501 shell.
+endpoints: parse streams the upload after auth, and analyze turns a parsed
+document into a cited TenderAnalysisV1 report.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from python_multipart.multipart import MultipartParseError, MultipartParser, parse_options_header
 
+from app.analysis import analyze_document as run_analysis
 from app.auth import require_internal_token
-from app.config import Settings
-from app.contracts import ParseResponse
+from app.config import Settings, get_settings
+from app.contracts import AnalyzeRequest, ParseResponse
+from app.llm import AnalysisError, LiteLlmProvider, LlmProvider
 from app.pdf import ParseError, parse_pdf
 
 
@@ -134,6 +139,27 @@ def _error(status_code: int, code: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"detail": code})
 
 
+async def _read_body(request: Request, max_bytes: int) -> bytes | None:
+    """Read the request body up to ``max_bytes``; return None when over limit."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > max_bytes:
+            return None
+    return bytes(data)
+
+
+def _build_provider(settings: Settings) -> LlmProvider:
+    model = settings.llm_model
+    if "/" not in model:
+        model = f"{settings.llm_provider}/{model}"
+    return LiteLlmProvider(
+        model=model,
+        api_key=settings.llm_api_key,
+        timeout=settings.llm_timeout_seconds,
+    )
+
+
 @app.post("/internal/v1/parse")
 async def parse_document(
     _token: Annotated[None, Depends(require_internal_token)],
@@ -204,6 +230,33 @@ async def parse_document(
 @app.post("/internal/v1/analyze")
 async def analyze_document(
     _token: Annotated[None, Depends(require_internal_token)],
+    request: Request,
 ):
-    """Analyze a parsed document and return TenderAnalysisV1. (Task 3)"""
-    return JSONResponse(content={"detail": "not implemented"}, status_code=501)
+    """Analyze a parsed document and return a cited TenderAnalysisV1 report.
+
+    Authentication runs before the JSON body is read; the body is bounded to
+    ``MAX_REQUEST_BYTES`` by actual streamed bytes, then parsed and validated.
+    """
+    data = await _read_body(request, MAX_REQUEST_BYTES)
+    if data is None:
+        return _error(413, "request_too_large")
+
+    try:
+        payload = json.loads(data)
+        analyze_request = AnalyzeRequest.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError):
+        return _error(400, "invalid_request")
+
+    settings = get_settings()
+    provider = _build_provider(settings)
+    try:
+        report = await run_analysis(
+            analyze_request.document,
+            provider,
+            settings.llm_model,
+            model_provider=settings.llm_provider,
+        )
+    except AnalysisError as exc:
+        return JSONResponse(status_code=502, content={"detail": exc.code})
+
+    return report

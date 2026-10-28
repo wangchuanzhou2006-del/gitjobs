@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     internal_service_token: SecretStr
 
+    llm_provider: str = "openai"
+    llm_model: str = ""
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = 90.0
+
     @field_validator("internal_service_token")
     @classmethod
     def _token_min_length(cls, v: SecretStr) -> SecretStr:
@@ -23,7 +28,13 @@ class Settings(BaseSettings):
         return v
 
     def __repr__(self) -> str:
-        return f"Settings(internal_service_token={self.internal_service_token!r})"
+        return (
+            "Settings("
+            f"internal_service_token={self.internal_service_token!r}, "
+            f"llm_provider={self.llm_provider!r}, "
+            f"llm_model={self.llm_model!r}, "
+            f"llm_api_key={self.llm_api_key!r})"
+        )
 
 
 def get_settings() -> Settings:

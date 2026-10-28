@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.5.0",
     "python-multipart>=0.0.18",
     "pymupdf>=1.24.0",
+    "litellm>=1.40.0",
 ]
 
 [project.optional-dependencies]

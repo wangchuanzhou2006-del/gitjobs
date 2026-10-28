@@ -166,8 +166,8 @@ async def test_parse_valid_token_missing_multipart_returns_400(app, monkeypatch,
 
 
 @pytest.mark.anyio
-async def test_analyze_valid_token_returns_501(app, monkeypatch, valid_token):
-    """POST /internal/v1/analyze with valid token returns 501."""
+async def test_analyze_valid_token_missing_body_returns_400(app, monkeypatch, valid_token):
+    """POST /internal/v1/analyze with a valid token but no JSON body returns 400."""
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", valid_token)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -175,7 +175,7 @@ async def test_analyze_valid_token_returns_501(app, monkeypatch, valid_token):
             "/internal/v1/analyze",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
-    assert response.status_code == 501
+    assert response.status_code == 400
 
 
 # ── Consistent error message ──────────────────────────────────
