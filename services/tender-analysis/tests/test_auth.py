@@ -153,8 +153,8 @@ async def test_parse_malformed_auth_returns_401(app, monkeypatch, valid_token):
 
 
 @pytest.mark.anyio
-async def test_parse_valid_token_requires_file(app, monkeypatch, valid_token):
-    """POST /internal/v1/parse with a valid token but no file returns 422."""
+async def test_parse_valid_token_missing_multipart_returns_400(app, monkeypatch, valid_token):
+    """POST /internal/v1/parse with a valid token but no multipart body returns 400."""
     monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", valid_token)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -162,7 +162,7 @@ async def test_parse_valid_token_requires_file(app, monkeypatch, valid_token):
             "/internal/v1/parse",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 @pytest.mark.anyio

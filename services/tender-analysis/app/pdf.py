@@ -78,6 +78,7 @@ def parse_pdf(data: bytes) -> ParsedDocument:
 
     Raises :class:`ParseError` for invalid, encrypted, oversized, or
     text-starved documents instead of returning partial or fabricated text.
+    Any unexpected PyMuPDF content error maps to ``invalid_pdf``.
     """
     if not data:
         raise ParseError("invalid_pdf")
@@ -89,29 +90,34 @@ def parse_pdf(data: bytes) -> ParsedDocument:
         raise ParseError("invalid_pdf")
 
     try:
-        if doc.needs_pass:
-            raise ParseError("encrypted_pdf")
+        try:
+            if doc.needs_pass:
+                raise ParseError("encrypted_pdf")
 
-        page_count = doc.page_count
-        if page_count == 0:
+            page_count = doc.page_count
+            if page_count == 0:
+                raise ParseError("invalid_pdf")
+            if page_count > MAX_PAGES:
+                raise ParseError("too_many_pages")
+
+            total_bytes = 0
+            pages: list[ParsedPage] = []
+            for page_number in range(1, page_count + 1):
+                text = normalize_text(doc[page_number - 1].get_text("text"))
+                total_bytes += len(text.encode("utf-8"))
+                if total_bytes > MAX_EXTRACTED_BYTES:
+                    raise ParseError("extracted_text_too_large")
+                chunks = chunk_page(page_number, text) if text.strip() else []
+                pages.append(ParsedPage(page_number=page_number, text=text, chunks=chunks))
+
+            text_pages = sum(1 for page in pages if page.text.strip())
+            if text_pages * 10 < page_count:
+                raise ParseError("ocr_required")
+
+            return ParsedDocument(page_count=page_count, pages=pages)
+        except ParseError:
+            raise
+        except Exception:
             raise ParseError("invalid_pdf")
-        if page_count > MAX_PAGES:
-            raise ParseError("too_many_pages")
-
-        total_bytes = 0
-        pages: list[ParsedPage] = []
-        for page_number in range(1, page_count + 1):
-            text = normalize_text(doc[page_number - 1].get_text("text"))
-            total_bytes += len(text.encode("utf-8"))
-            if total_bytes > MAX_EXTRACTED_BYTES:
-                raise ParseError("extracted_text_too_large")
-            chunks = chunk_page(page_number, text) if text.strip() else []
-            pages.append(ParsedPage(page_number=page_number, text=text, chunks=chunks))
-
-        text_pages = sum(1 for page in pages if page.text.strip())
-        if text_pages * 10 < page_count:
-            raise ParseError("ocr_required")
-
-        return ParsedDocument(page_count=page_count, pages=pages)
     finally:
         doc.close()
