@@ -258,17 +258,17 @@ def generate_tender_analysis_schema() -> dict:
     schema["$id"] = "https://gitjobs.dev/contracts/tender-analysis.v1.schema.json"
     schema["title"] = "Tender Analysis v1"
     schema["description"] = "Canonical public result contract for AI tender document analysis v1."
-    _require_evidence_citation_when_confirmed(schema)
+    _encode_evidence_value_rules(schema)
     return schema
 
 
-def _require_evidence_citation_when_confirmed(schema: dict) -> None:
-    """Encode the EvidenceValue cross-field rule in the public schema.
+def _encode_evidence_value_rules(schema: dict) -> None:
+    """Encode EvidenceValue's cross-field validators in the public schema.
 
-    ``EvidenceValue._check_citation_evidence`` rejects a non-null ``value`` with
-    no citations, but ``model_json_schema`` cannot express a model validator.
-    Add the equivalent ``if``/``then`` condition so Pydantic and jsonschema
-    reject the same payloads.
+    ``model_json_schema`` cannot express ``EvidenceValue._check_citation_evidence``:
+    a non-null ``value`` requires at least one citation, and a null ``value``
+    requires ``requires_review=True``. Add the equivalent ``if``/``then``
+    conditions so Pydantic and jsonschema reject the same payloads.
     """
     schema["$defs"]["EvidenceValue"]["allOf"] = [
         {
@@ -277,5 +277,12 @@ def _require_evidence_citation_when_confirmed(schema: dict) -> None:
                 "required": ["value"],
             },
             "then": {"properties": {"citations": {"minItems": 1}}},
-        }
+        },
+        {
+            "if": {
+                "properties": {"value": {"type": "null"}},
+                "required": ["value"],
+            },
+            "then": {"properties": {"requires_review": {"const": True}}},
+        },
     ]

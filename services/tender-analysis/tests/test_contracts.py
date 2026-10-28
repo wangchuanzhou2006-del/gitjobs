@@ -883,6 +883,24 @@ def test_evidence_null_empty_citations_accepted_by_both():
     jsonschema.validate(payload, generate_tender_analysis_schema())
 
 
+def test_evidence_null_false_review_rejected_by_both():
+    """A null EvidenceValue with requires_review=False must fail Pydantic and jsonschema."""
+    import jsonschema
+
+    from app.contracts import TenderAnalysisV1, generate_tender_analysis_schema
+
+    payload = _load_fixture()
+    payload["project_info"]["project_name"]["value"] = None
+    payload["project_info"]["project_name"]["requires_review"] = False
+    payload["project_info"]["project_name"]["citations"] = []
+
+    with pytest.raises(ValidationError):
+        TenderAnalysisV1.model_validate(payload)
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(payload, generate_tender_analysis_schema())
+
+
 def test_wrong_prompt_version_rejected_by_jsonschema():
     """jsonschema must reject arbitrary prompt version strings."""
     import jsonschema

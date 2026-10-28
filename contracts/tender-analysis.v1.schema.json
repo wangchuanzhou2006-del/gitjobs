@@ -129,6 +129,25 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "value": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "value"
+            ]
+          },
+          "then": {
+            "properties": {
+              "requires_review": {
+                "const": true
+              }
+            }
+          }
         }
       ]
     },
