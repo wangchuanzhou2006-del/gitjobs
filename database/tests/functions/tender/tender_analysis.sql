@@ -1,5 +1,5 @@
 begin;
-select plan(39);
+select plan(43);
 
 \set owner '00000000-0000-0000-0000-000000000601'
 \set other '00000000-0000-0000-0000-000000000602'
@@ -536,6 +536,52 @@ select is(
     (get_tender_analysis_job(:'owner', :'job2_id'::uuid))::text like '%TOP_SECRET_SENTINEL%',
     false,
     'fail never persists caller error text'
+);
+
+-- A failed job is not reusable: a retry creates a fresh job with a real UUID.
+select create_tender_document_job(
+    jsonb_build_object(
+        'user_id', :'owner',
+        'project_id', :'project_id',
+        'storage_key', 'docs/key2.pdf',
+        'sha256', '0000000000000000000000000000000000000000000000000000000000000002',
+        'size_bytes', 10,
+        'filename', 'second.pdf',
+        'analysis_config_hash', 'config-v2',
+        'model_provider', 'openai',
+        'model_name', 'gpt-4o',
+        'prompt_version', 'tender-project-info-v1'
+    )
+) as retry_result
+\gset
+
+select jsonb_extract_path_text(:'retry_result'::jsonb, 'job_id') as retry_job_id
+\gset
+
+select is(
+    jsonb_typeof(:'retry_result'::jsonb -> 'job_id'),
+    'string',
+    'a retry after failure returns a non-null job_id'
+);
+select isnt(
+    :'retry_job_id'::uuid,
+    :'job2_id'::uuid,
+    'a retry after failure creates a fresh job'
+);
+select is(
+    jsonb_extract_path_text(:'retry_result'::jsonb, 'created'),
+    'true',
+    'a retry after failure reports created=true'
+);
+select is(
+    (select count(*) from tender_analysis_jobs
+     where document_id = (
+         select document_id from tender_analysis_jobs where job_id = :'job2_id'::uuid
+     )
+       and analysis_config_hash = 'config-v2'
+       and status <> 'failed'),
+    1::bigint,
+    'only one non-failed job exists for a failed config'
 );
 
 select * from finish();

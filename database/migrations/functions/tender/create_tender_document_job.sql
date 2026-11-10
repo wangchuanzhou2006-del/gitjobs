@@ -1,18 +1,17 @@
 -- Upserts a document without overwriting an existing one, and reuses an
--- existing non-failed job (active, partial, or completed) for the same config.
+-- existing reusable (non-failed) job — active, partial, or completed — for the
+-- same config. A failed job is left in place so a retry creates a fresh one.
 --
--- Concurrency strategy: the job insert targets the partial unique index on
--- reusable (non-failed) jobs with ON CONFLICT ... WHERE ... DO NOTHING, then
--- the loser selects the winner. This makes concurrent creates for the same
--- config idempotent without ever surfacing a unique-index error, and closes
--- the race where a job completes between the lookup and the insert.
+-- Concurrency: the document row is locked with FOR UPDATE for the whole
+-- read-then-insert section, so concurrent creates for the same file serialize
+-- and the insert below can neither race a completion into a duplicate job nor
+-- return an empty job_id. The reusable-config unique index remains a backstop.
 create or replace function create_tender_document_job(p_input jsonb)
 returns jsonb as $$
 declare
     v_document_id uuid;
     v_document_created boolean;
     v_job_id uuid;
-    v_created boolean;
 begin
     if p_input is null or jsonb_typeof(p_input) <> 'object' then
         raise exception 'tender document job must be a JSON object' using errcode = '22023';
@@ -57,7 +56,8 @@ begin
         select document_id into v_document_id
         from tender_documents
         where project_id = (p_input->>'project_id')::uuid
-          and sha256 = (p_input->>'sha256');
+          and sha256 = (p_input->>'sha256')
+        for update;
         v_document_created := false;
     else
         v_document_created := true;
@@ -67,7 +67,7 @@ begin
     from tender_analysis_jobs
     where document_id = v_document_id
       and analysis_config_hash = (p_input->>'analysis_config_hash')
-      and status in ('queued', 'parsing', 'analyzing', 'partial', 'completed')
+      and status <> 'failed'
     order by created_at
     limit 1;
 
@@ -93,27 +93,11 @@ begin
         nullif(p_input->>'model_name', ''),
         nullif(p_input->>'prompt_version', '')
     )
-    on conflict (document_id, analysis_config_hash)
-        where status <> 'failed'
-        do nothing
     returning job_id into v_job_id;
-
-    if v_job_id is null then
-        select job_id into v_job_id
-        from tender_analysis_jobs
-        where document_id = v_document_id
-          and analysis_config_hash = (p_input->>'analysis_config_hash')
-          and status <> 'failed'
-        order by created_at
-        limit 1;
-        v_created := false;
-    else
-        v_created := true;
-    end if;
 
     return jsonb_build_object(
         'job_id', v_job_id,
-        'created', v_created,
+        'created', true,
         'document_created', v_document_created
     );
 end;
