@@ -127,6 +127,20 @@ jobs:
             --env PGPASSWORD=tests \
             gitjobs-db-tests:ci \
             sh -c 'pg_prove --host postgres --dbname tests --username tests --verbose schema/*.sql functions/*/*.sql'
+      - name: Run tender two-session database checks
+        run: |
+          docker run --rm \
+            --network gitjobs-db-tests \
+            --volume "${{ github.workspace }}:/workspace" \
+            --workdir /workspace/database/tests \
+            --env PGHOST=postgres \
+            --env PGPORT=5432 \
+            --env PGDATABASE=tests \
+            --env PGUSER=tests \
+            --env PGPASSWORD=tests \
+            --env TENDER_CONCURRENCY_TEST=1 \
+            gitjobs-db-tests:ci \
+            sh functions/tender/tender_concurrency.sh
       - name: Show database logs
         if: failure()
         run: docker logs gitjobs-postgres-db-tests
