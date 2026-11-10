@@ -304,6 +304,165 @@ mock! {
     }
 
     #[async_trait]
+    impl crate::db::talent::DBTalent for DB {
+        async fn create_talent_import(
+            &self,
+            talent_import: crate::db::talent::NewTalentImport,
+        ) -> Result<Uuid>;
+        async fn list_talent_import_batches(
+            &self,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::TalentImportBatchSummary>>;
+        async fn claim_talent_import_item(
+            &self,
+        ) -> Result<Option<crate::db::talent::ClaimedTalentItem>>;
+        async fn complete_talent_import_item(
+            &self,
+            item: crate::db::talent::CompletedTalentItem,
+        ) -> Result<()>;
+        async fn fail_talent_import_item(
+            &self,
+            item: crate::db::talent::FailedTalentItem,
+        ) -> Result<()>;
+        async fn list_talent_review_items(
+            &self,
+            filter: crate::db::talent::TalentReviewFilter,
+        ) -> Result<Vec<crate::db::talent::TalentReviewItemSummary>>;
+        async fn get_talent_review_item(
+            &self,
+            item_id: Uuid,
+        ) -> Result<Option<crate::db::talent::TalentReviewItem>>;
+        async fn find_talent_duplicate_candidates(
+            &self,
+            probe: crate::db::talent::TalentDuplicateProbe,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::TalentDuplicateCandidate>>;
+        async fn save_talent_review(
+            &self,
+            review: crate::db::talent::SaveTalentReview,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn publish_talent_item(
+            &self,
+            publication: crate::db::talent::PublishTalentItem,
+        ) -> Result<crate::db::talent::PublishOutcome>;
+        async fn merge_talent_import_item(
+            &self,
+            merge: crate::db::talent::MergeTalentImportItem,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn transition_talent_import_item(
+            &self,
+            transition: crate::db::talent::TransitionTalentImportItem,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn withdraw_talent_record(
+            &self,
+            item_id: Uuid,
+            record_id: Uuid,
+            lock_version: u32,
+            actor_user_id: Uuid,
+            reason: Option<crate::db::talent::AuditReason>,
+        ) -> Result<crate::db::talent::SaveReviewOutcome>;
+        async fn list_published_talent_records(
+            &self,
+            kind: Option<crate::talent::TalentKind>,
+            limit: u16,
+        ) -> Result<Vec<crate::db::talent::PublicTalentRecord>>;
+        async fn get_talent_runtime_settings(
+            &self,
+        ) -> Result<crate::db::talent::TalentRuntimeSettings>;
+        async fn set_talent_auto_publish(
+            &self,
+            enabled: bool,
+            actor_user_id: Uuid,
+            expected_updated_at: DateTime<Utc>,
+        ) -> Result<crate::db::talent::ResourceUpdateOutcome<crate::db::talent::TalentRuntimeSettings>>;
+        async fn set_talent_source_status(
+            &self,
+            source_id: Uuid,
+            trust_status: crate::talent::SourceTrust,
+            actor_user_id: Uuid,
+            auto_publish_enabled: bool,
+            expected_updated_at: DateTime<Utc>,
+        ) -> Result<crate::db::talent::ResourceUpdateOutcome<crate::db::talent::TalentSourceStatus>>;
+        async fn cleanup_talent_raw_data(
+            &self,
+            now: DateTime<Utc>,
+        ) -> Result<crate::db::talent::TalentCleanupOutcome>;
+        async fn upsert_talent_source_subscription(
+            &self,
+            subscription: crate::db::talent::UpsertTalentSourceSubscription,
+        ) -> Result<Uuid>;
+        async fn list_talent_source_subscriptions(
+            &self,
+        ) -> Result<Vec<crate::db::talent::TalentSourceSubscription>>;
+        async fn claim_talent_source_subscription(
+            &self,
+        ) -> Result<Option<crate::db::talent::ClaimedTalentSourceSubscription>>;
+        async fn complete_talent_source_run(
+            &self,
+            run: crate::db::talent::CompleteTalentSourceRun,
+        ) -> Result<bool>;
+        async fn set_talent_source_subscription_enabled(
+            &self,
+            subscription_id: Uuid,
+            enabled: bool,
+            actor_user_id: Uuid,
+        ) -> Result<bool>;
+        async fn reserve_talent_source_item(
+            &self,
+            subscription_id: Uuid,
+            source_item_id: &str,
+            content_fingerprint: &str,
+        ) -> Result<bool>;
+        async fn release_talent_source_item(
+            &self,
+            subscription_id: Uuid,
+            source_item_id: &str,
+            content_fingerprint: &str,
+        ) -> Result<bool>;
+    }
+
+    #[async_trait]
+    impl crate::db::tender::DBTender for DB {
+        async fn create_tender_project(
+            &self,
+            input: crate::db::tender::NewTenderProject,
+        ) -> Result<Uuid>;
+        async fn create_tender_document_job(
+            &self,
+            input: crate::db::tender::NewTenderDocumentJob,
+        ) -> Result<crate::db::tender::CreateJobOutcome>;
+        async fn claim_tender_analysis_job(
+            &self,
+        ) -> Result<Option<crate::db::tender::ClaimedTenderJob>>;
+        async fn transition_tender_analysis_job(
+            &self,
+            input: crate::db::tender::TenderJobTransition,
+        ) -> Result<()>;
+        async fn complete_tender_analysis_job(
+            &self,
+            input: crate::db::tender::CompletedTenderJob,
+        ) -> Result<Uuid>;
+        async fn fail_tender_analysis_job(
+            &self,
+            input: crate::db::tender::FailedTenderJob,
+        ) -> Result<()>;
+        async fn get_tender_analysis_job(
+            &self,
+            user_id: Uuid,
+            job_id: Uuid,
+        ) -> Result<Option<crate::db::tender::TenderJobView>>;
+        async fn list_tender_projects(
+            &self,
+            user_id: Uuid,
+        ) -> Result<Vec<crate::db::tender::TenderProjectRow>>;
+        async fn get_tender_report(
+            &self,
+            user_id: Uuid,
+            report_id: Uuid,
+        ) -> Result<Option<crate::db::tender::TenderReportRow>>;
+    }
+
+    #[async_trait]
     impl crate::db::workers::DBWorkers for DB {
         async fn archive_expired_jobs(&self) -> Result<()>;
     }

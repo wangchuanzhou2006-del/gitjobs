@@ -37,7 +37,7 @@ where
 {
     let value = Option::<String>::deserialize(deserializer)?;
 
-    Ok(value.and_then(|value| if value.is_empty() { None } else { Some(value) }))
+    Ok(value.filter(|value| !value.is_empty()))
 }
 
 /// Find an employer by id in a list of employers.

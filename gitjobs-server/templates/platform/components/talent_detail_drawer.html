@@ -1,0 +1,36 @@
+<aside id="talent-detail-drawer"
+       class="talent-detail-drawer"
+       data-open="false"
+       hidden>
+  <section class="talent-detail-panel"
+           data-talent-dialog
+           role="dialog"
+           aria-modal="true"
+           aria-labelledby="talent-detail-title"
+           tabindex="-1">
+    <button type="button" data-close-talent-detail aria-label="关闭人才详情">关闭</button>
+    <h2 id="talent-detail-title" data-talent-detail-title>人才详情</h2>
+    <p data-talent-match-summary>等待输入条件</p>
+    <p data-talent-match-explanation>未生成 AI 结论。</p>
+    <dl data-talent-detail-facts>
+    </dl>
+    <section aria-labelledby="talent-hit-title">
+      <h3 id="talent-hit-title">命中条件</h3>
+      <ul data-talent-hit-list>
+      </ul>
+    </section>
+    <section aria-labelledby="talent-miss-title">
+      <h3 id="talent-miss-title">未命中条件</h3>
+      <ul data-talent-miss-list>
+      </ul>
+    </section>
+    <section aria-labelledby="talent-risk-title">
+      <h3 id="talent-risk-title">风险与缺失字段</h3>
+      <ul data-talent-risk-list>
+      </ul>
+    </section>
+    <p data-talent-source></p>
+    <p data-talent-updated></p>
+    <p data-talent-contact>联系方式：暂未提供</p>
+  </section>
+</aside>

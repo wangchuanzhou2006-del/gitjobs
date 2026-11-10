@@ -1,5 +1,7 @@
 //! This module defines the router used to dispatch HTTP requests to handlers.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
     Extension, Router,
@@ -40,6 +42,7 @@ use crate::{
     },
     img::DynImageStore,
     notifications::DynNotificationsManager,
+    talent::TalentServices,
 };
 
 /// Embeds static files from the "static" folder into the binary.
@@ -67,6 +70,8 @@ pub(crate) struct State {
     pub event_tracker: DynEventTracker,
     /// Shared HTTP client for outbound requests.
     pub http_client: Client,
+    /// Talent import, review, and background processing services.
+    pub talent: Arc<TalentServices>,
 }
 
 /// Sets up the main application router and all sub-routers.
@@ -77,6 +82,8 @@ pub(crate) async fn setup(
     image_store: DynImageStore,
     notifications_manager: DynNotificationsManager,
     event_tracker: DynEventTracker,
+    talent: Arc<TalentServices>,
+    http_client: Client,
 ) -> Result<Router> {
     // Setup router state
     let serde_qs_de = serde_qs_config();
@@ -84,10 +91,11 @@ pub(crate) async fn setup(
         cfg: cfg.clone(),
         db: db.clone(),
         event_tracker,
-        http_client: Client::new(),
+        http_client,
         image_store,
         notifications_manager,
         serde_qs_de,
+        talent,
     };
 
     // Setup authentication / authorization layer
@@ -125,6 +133,7 @@ pub(crate) async fn setup(
         // Public routes
         .route("/", get(jobboard::jobs::jobs_page))
         .route("/opportunities", get(platform::opportunities::page))
+        .route("/talent", get(platform::talent::page))
         .route("/about", get(jobboard::about::page))
         .route("/embed", get(jobboard::embed::jobs_page))
         .route("/embed/job/{job_id}/card.svg", get(jobboard::embed::job_card))
@@ -322,6 +331,69 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
         .route("/jobs/pending", get(dashboard::moderator::jobs::pending_page))
         .route("/jobs/{job_id}/approve", put(dashboard::moderator::jobs::approve))
         .route("/jobs/{job_id}/reject", put(dashboard::moderator::jobs::reject))
+        .route(
+            "/talent/import",
+            get(dashboard::moderator::talent::import::page)
+                .post(dashboard::moderator::talent::import::create),
+        )
+        .route(
+            "/talent/radar",
+            get(dashboard::moderator::talent::radar::page).post(dashboard::moderator::talent::radar::create),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/toggle",
+            post(dashboard::moderator::talent::radar::toggle)
+                .put(dashboard::moderator::talent::radar::toggle),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/edit",
+            get(dashboard::moderator::talent::radar::edit_page)
+                .post(dashboard::moderator::talent::radar::create),
+        )
+        .route("/talent/review", get(dashboard::moderator::talent::review::queue))
+        .route(
+            "/talent/review/{item_id}",
+            get(dashboard::moderator::talent::review::detail),
+        )
+        .route(
+            "/talent/review/{item_id}/publish",
+            post(dashboard::moderator::talent::review::publish)
+                .put(dashboard::moderator::talent::review::publish),
+        )
+        .route(
+            "/talent/review/{item_id}/save",
+            post(dashboard::moderator::talent::review::save).put(dashboard::moderator::talent::review::save),
+        )
+        .route(
+            "/talent/review/{item_id}/merge",
+            post(dashboard::moderator::talent::review::merge)
+                .put(dashboard::moderator::talent::review::merge),
+        )
+        .route(
+            "/talent/review/{item_id}/reject",
+            post(dashboard::moderator::talent::review::reject)
+                .put(dashboard::moderator::talent::review::reject),
+        )
+        .route(
+            "/talent/review/{item_id}/reprocess",
+            post(dashboard::moderator::talent::review::reprocess)
+                .put(dashboard::moderator::talent::review::reprocess),
+        )
+        .route(
+            "/talent/review/{item_id}/withdraw",
+            post(dashboard::moderator::talent::review::withdraw)
+                .put(dashboard::moderator::talent::review::withdraw),
+        )
+        .route(
+            "/talent/auto-publish/pause",
+            post(dashboard::moderator::talent::review::pause)
+                .put(dashboard::moderator::talent::review::pause),
+        )
+        .route(
+            "/talent/sources/{source_id}/status",
+            post(dashboard::moderator::talent::review::source_status)
+                .put(dashboard::moderator::talent::review::source_status),
+        )
         .route(
             "/jobs/{employer_id}/{job_id}/preview",
             get(dashboard::moderator::jobs::preview_page),

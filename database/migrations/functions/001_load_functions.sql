@@ -73,6 +73,44 @@
 {{ template "syncer/update_member.sql" }}
 {{ template "syncer/update_project.sql" }}
 
+{{ template "talent/upsert_talent_source.sql" }}
+{{ template "talent/create_talent_import_batch.sql" }}
+{{ template "talent/list_talent_import_batches.sql" }}
+{{ template "talent/talent_audit_safe_jsonb.sql" }}
+{{ template "talent/claim_talent_import_item.sql" }}
+{{ template "talent/complete_talent_import_item.sql" }}
+{{ template "talent/fail_talent_import_item.sql" }}
+{{ template "talent/list_talent_review_items.sql" }}
+{{ template "talent/get_talent_review_item.sql" }}
+{{ template "talent/find_talent_duplicate_candidates.sql" }}
+{{ template "talent/update_talent_review_item.sql" }}
+{{ template "talent/publish_talent_item.sql" }}
+{{ template "talent/merge_talent_import_item.sql" }}
+{{ template "talent/transition_talent_import_item.sql" }}
+{{ template "talent/withdraw_talent_record.sql" }}
+{{ template "talent/list_published_talent_records.sql" }}
+{{ template "talent/set_talent_auto_publish.sql" }}
+{{ template "talent/get_talent_runtime_settings.sql" }}
+{{ template "talent/set_talent_source_status.sql" }}
+{{ template "talent/cleanup_talent_raw_data.sql" }}
+{{ template "talent/upsert_talent_source_subscription.sql" }}
+{{ template "talent/list_talent_source_subscriptions.sql" }}
+{{ template "talent/claim_talent_source_subscription.sql" }}
+{{ template "talent/complete_talent_source_run.sql" }}
+{{ template "talent/set_talent_source_subscription_enabled.sql" }}
+{{ template "talent/reserve_talent_source_item.sql" }}
+{{ template "talent/release_talent_source_item.sql" }}
+
+{{ template "tender/create_tender_project.sql" }}
+{{ template "tender/create_tender_document_job.sql" }}
+{{ template "tender/claim_tender_analysis_job.sql" }}
+{{ template "tender/transition_tender_analysis_job.sql" }}
+{{ template "tender/complete_tender_analysis_job.sql" }}
+{{ template "tender/fail_tender_analysis_job.sql" }}
+{{ template "tender/get_tender_analysis_job.sql" }}
+{{ template "tender/list_tender_projects.sql" }}
+{{ template "tender/get_tender_report.sql" }}
+
 {{ template "workers/archive_expired_jobs.sql" }}
 
 ---- create above / drop below ----

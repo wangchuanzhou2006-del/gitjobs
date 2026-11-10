@@ -85,6 +85,7 @@ db-recreate-tests: db-drop-tests db-create-tests db-migrate-tests
 # Run database tests (recreates test db and runs pgTAP tests).
 db-tests: db-recreate-tests
     pg_prove -h {{ db_host }} -p {{ db_port }} -d {{ db_name_tests }} -U {{ db_user }} --psql-bin {{ pg_bin }}/psql -v $(find "{{ source_dir }}/database/tests/schema" "{{ source_dir }}/database/tests/functions" -type f -name '*.sql' | sort)
+    TENDER_CONCURRENCY_TEST=1 PGHOST="{{ db_host }}" PGPORT="{{ db_port }}" PGDATABASE="{{ db_name_tests }}" PGUSER="{{ db_user }}" PSQL_BIN="{{ pg_bin }}/psql" sh "{{ source_dir }}/database/tests/functions/tender/tender_concurrency.sh"
 
 # Run database tests on a specific file.
 db-tests-file file: db-migrate-tests

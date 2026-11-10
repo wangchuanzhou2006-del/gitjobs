@@ -182,7 +182,7 @@ mod tests {
         db::{DynDB, mock::MockDB},
         event_tracker::{DynEventTracker, MockEventTracker},
         handlers::auth::SELECTED_EMPLOYER_ID_KEY,
-        handlers::tests::{TestRouterBuilder, qs_config, test_http_server_cfg},
+        handlers::tests::{TestRouterBuilder, qs_config, test_http_server_cfg, test_talent_services},
         img::{DynImageStore, MockImageStore},
         notifications::{DynNotificationsManager, MockNotificationsManager},
         validation::{MAX_LEN_S, trimmed_non_empty, trimmed_non_empty_vec},
@@ -639,6 +639,7 @@ mod tests {
 
         router::State {
             cfg: test_http_server_cfg(),
+            talent: test_talent_services(db.clone()),
             db,
             event_tracker,
             http_client: reqwest::Client::new(),
