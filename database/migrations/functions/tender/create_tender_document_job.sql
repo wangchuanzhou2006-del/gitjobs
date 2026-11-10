@@ -16,7 +16,7 @@ begin
     -- Bound the document row-lock wait (the FOR UPDATE and the document unique
     -- index below) so a stuck holder fails fast with 55P03 instead of blocking
     -- creates forever.
-    perform set_config('lock_timeout', '10 seconds', true);
+    perform set_config('lock_timeout', '10s', true);
 
     if p_input is null or jsonb_typeof(p_input) <> 'object' then
         raise exception 'tender document job must be a JSON object' using errcode = '22023';
