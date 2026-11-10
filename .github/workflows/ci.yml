@@ -21,6 +21,8 @@ jobs:
         run: |
           wget -O /usr/local/bin/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.0.17/tailwindcss-linux-x64
           chmod +x /usr/local/bin/tailwindcss
+      - name: Run tender database boundary tests
+        run: cargo test -p gitjobs-server db::tender
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- --deny warnings
       - name: Run rustfmt
