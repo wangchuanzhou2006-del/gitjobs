@@ -1,45 +1,135 @@
 #!/bin/sh
-# Two-session concurrency regression for create_tender_document_job.
-#
-# Verifies three things that a single pgTAP session cannot:
-#   1. ordinary concurrent creates of the same file+config yield one reusable
-#      job and a real, identical job_id from both sessions (never empty);
-#   2. the previous "find-existing -> INSERT ... ON CONFLICT DO NOTHING ->
-#      loser-select" shape returns an empty job_id when the conflicting job is
-#      failed between the insert and the re-select (documented repro of the bug
-#      the FOR UPDATE lock fixes);
-#   3. the FOR UPDATE wait is bounded by lock_timeout: a stuck holder makes the
-#      create fail with SQLSTATE 55P03 instead of hanging.
-#
-# Run inside the gitjobs-db-tests image against the migrated test database,
-# exactly like migrations/0018_talent_key_versions_u32.sh:
-#
-#   PGHOST=postgres PGPORT=5432 PGDATABASE=tests PGUSER=tests PGPASSWORD=tests \
-#       sh functions/tender/tender_concurrency.sh
+# Run against a migrated, disposable PostgreSQL test database. This exercises
+# real concurrent sessions; the pgTAP .sql tests cannot control two sessions.
 #
 set -eu
 
 psql_bin=${PSQL_BIN:-psql}
 
-# Dedicated identity so a rerun never collides with the pgTAP suite (which uses
-# 0601/0602 inside a rolled-back transaction). Cleanup deletes this user, which
-# cascades through projects, documents, jobs, and reports.
-owner='00000000-0000-0000-0000-000000000611'
-sha256='00000000000000000000000000000000000000000000000000000000000000c1'
-project_title='tender concurrency test'
+if [ "${TENDER_CONCURRENCY_TEST:-}" != 1 ]; then
+    echo 'set TENDER_CONCURRENCY_TEST=1 only for a disposable test database' >&2
+    exit 1
+fi
+if [ -z "${PGDATABASE:-}" ]; then
+    echo 'PGDATABASE must name a dedicated test database' >&2
+    exit 1
+fi
+case $PGDATABASE in
+    tests|*_tests) ;;
+    *) echo "refusing to run against non-test database: $PGDATABASE" >&2; exit 1 ;;
+esac
 
 q() {
     "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c "$1"
 }
 
-cleanup() {
-    "$psql_bin" -X -qAt -c "delete from \"user\" where user_id = '$owner';" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT INT TERM
-cleanup
+actual_database=$(q 'select current_database()')
+if [ "$actual_database" != "$PGDATABASE" ]; then
+    echo "database mismatch: expected $PGDATABASE, connected to $actual_database" >&2
+    exit 1
+fi
+has_pgtap=$(q "select exists (select 1 from pg_extension where extname = 'pgtap');")
+if [ "$has_pgtap" != t ]; then
+    echo 'refusing to run without the pgTAP test-database extension' >&2
+    exit 1
+fi
 
-q "insert into \"user\" (auth_hash, email, name, user_id, username) values (decode('02','hex'), 'tender-concurrency@example.com', 'Concurrency', '$owner', 'tender_concurrency');"
-project_id=$(q "select create_tender_project(jsonb_build_object('user_id', '$owner', 'title', '$project_title', 'source_url', null))::text;")
+tmp_dir=$(mktemp -d)
+owner_created=0
+owner=
+email=
+holder_pid=
+worker_pid=
+session_a_pid=
+session_b_pid=
+watchdog_pid=
+
+cleanup() {
+    trap - 0
+    for child in "$watchdog_pid" "$worker_pid" "$holder_pid" "$session_a_pid" "$session_b_pid"; do
+        if [ -n "$child" ]; then
+            kill "$child" 2>/dev/null || true
+            wait "$child" 2>/dev/null || true
+        fi
+    done
+    exec 3>&- 4>&- 5>&-
+    if [ "$owner_created" -eq 1 ]; then
+        "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c \
+            "delete from \"user\" where user_id = '$owner' and email = '$email';" \
+            >/dev/null 2>&1 || true
+    fi
+    if [ -n "$tmp_dir" ] && [ "$tmp_dir" != / ] && [ -d "$tmp_dir" ]; then
+        rm -f "$tmp_dir"/*
+        rmdir "$tmp_dir" 2>/dev/null || true
+    fi
+}
+trap cleanup 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+fail() {
+    echo "$1" >&2
+    exit 1
+}
+
+wait_for_file() {
+    wf_file=$1
+    wf_pid=$2
+    wf_label=$3
+    wf_tries=0
+    while [ ! -f "$wf_file" ]; do
+        kill -0 "$wf_pid" 2>/dev/null || fail "$wf_label exited before signalling"
+        [ "$wf_tries" -lt 100 ] || fail "timed out waiting for $wf_label"
+        wf_tries=$((wf_tries + 1))
+        sleep 0.1
+    done
+}
+
+wait_for_db_lock() {
+    watch_app=$1
+    watch_pid=$2
+    watch_tries=0
+    while :; do
+        waiting=$(q "select count(*) from pg_stat_activity where application_name = '$watch_app' and wait_event_type = 'Lock';")
+        [ "$waiting" = 1 ] && return
+        kill -0 "$watch_pid" 2>/dev/null || fail "$watch_app exited before waiting for the document lock"
+        [ "$watch_tries" -lt 80 ] || fail "timed out waiting for $watch_app to block"
+        watch_tries=$((watch_tries + 1))
+        sleep 0.1
+    done
+}
+
+start_holder() {
+    holder_name=$1
+    holder_sql=$2
+    holder_fifo="$tmp_dir/$holder_name.fifo"
+    holder_out="$tmp_dir/$holder_name.out"
+    holder_err="$tmp_dir/$holder_name.err"
+    holder_marker="$tmp_dir/$holder_name.ready"
+    mkfifo "$holder_fifo"
+    "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -f "$holder_fifo" >"$holder_out" 2>"$holder_err" &
+    holder_pid=$!
+    exec 3>"$holder_fifo"
+    printf 'begin;\n%s\n\\! touch %s\n' "$holder_sql" "$holder_marker" >&3
+    wait_for_file "$holder_marker" "$holder_pid" "$holder_name"
+}
+
+release_holder() {
+    printf '%s;\n' "$1" >&3
+    exec 3>&-
+    if ! wait "$holder_pid"; then
+        cat "$holder_err" >&2
+        fail 'holder session failed'
+    fi
+    holder_pid=
+}
+
+owner=$(q 'select gen_random_uuid()')
+email="tender-concurrency-$owner@example.invalid"
+sha256='00000000000000000000000000000000000000000000000000000000000000c1'
+q "insert into \"user\" (auth_hash, email, name, user_id, username) values (decode('02','hex'), '$email', 'Concurrency', '$owner', 'tender_concurrency_$owner');"
+owner_created=1
+project_id=$(q "select create_tender_project(jsonb_build_object('user_id', '$owner', 'title', 'tender concurrency test', 'source_url', null))::text;")
 
 # Seed the document with a throwaway config; the create function owns the
 # document insert/upsert, so this also proves the document exists beforehand.
@@ -51,103 +141,114 @@ job_json() {
         "$owner" "$project_id" "$sha256" "$1"
 }
 
-# ---------------------------------------------------------------------------
-# Test 1: concurrent creates of the same new config -> one reusable job.
-# Session A opens a transaction, creates the job, then holds the document lock
-# for 2s. Session B starts at the same time and must block on the FOR UPDATE
-# until A commits, then reuse A's job. Both must return the same non-empty id.
-# ---------------------------------------------------------------------------
-cfg='config-new'
-tmp_a=$(mktemp)
-tmp_b=$(mktemp)
-( "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c "begin; select jsonb_extract_path_text(create_tender_document_job($(job_json "$cfg")), 'job_id'); select pg_sleep(2); commit;" >"$tmp_a" 2>&1 ) &
-pid_a=$!
-( "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c "select jsonb_extract_path_text(create_tender_document_job($(job_json "$cfg")), 'job_id');" >"$tmp_b" 2>&1 ) &
-pid_b=$!
-wait "$pid_a"
-wait "$pid_b"
-
-a_job=$(sed -n '1p' "$tmp_a" | tr -d '[:space:]')
-b_job=$(sed -n '1p' "$tmp_b" | tr -d '[:space:]')
-[ -n "$a_job" ] || { echo "session A returned an empty job_id" >&2; cat "$tmp_a" >&2; exit 1; }
-[ -n "$b_job" ] || { echo "session B returned an empty job_id" >&2; cat "$tmp_b" >&2; exit 1; }
-[ "$a_job" = "$b_job" ] || { echo "concurrent creates disagreed on job_id: $a_job vs $b_job" >&2; exit 1; }
-count=$(q "select count(*) from tender_analysis_jobs where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';")
-[ "$count" = "1" ] || { echo "expected 1 reusable job for $cfg, found $count" >&2; exit 1; }
-echo "PASS: concurrent creates of $cfg reused one job ($a_job)"
-
-# ---------------------------------------------------------------------------
-# Test 2: the old ON CONFLICT + loser-select shape returned an empty job_id
-# when the conflicting job was failed between the insert and the re-select.
-# This replays that exact shape with two sessions coordinated by an advisory
-# lock: before the conflict there is no reusable job, after the failed job
-# there is again none -- which is the empty-job_id the FOR UPDATE lock removes.
-# ---------------------------------------------------------------------------
-cfg='config-race'
-q "delete from tender_analysis_jobs where document_id = '$document_id' and analysis_config_hash = '$cfg';"
-tmp_a2=$(mktemp)
-
-# Session B: on each turn, first create a non-failed job, then fail it.
-( "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt <<SQL
-select pg_sleep(1);
-select pg_advisory_lock(2000);
-insert into tender_analysis_jobs (document_id, analysis_config_hash, status)
-values ('$document_id', '$cfg', 'analyzing');
-select pg_advisory_unlock(2000);
-select pg_advisory_lock(2000);
-update tender_analysis_jobs set status = 'failed'
-where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';
-select pg_advisory_unlock(2000);
-SQL
-) >/dev/null 2>&1 &
-pid_b=$!
-
-# Session A: replay the old shape between hand-offs.
-"$psql_bin" -X -v ON_ERROR_STOP=1 -qAt <<SQL >"$tmp_a2"
-select pg_advisory_lock(2000);
-select 'find-existing', count(*) from tender_analysis_jobs
- where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';
-select pg_advisory_unlock(2000);
-select pg_advisory_lock(2000);
-insert into tender_analysis_jobs (document_id, analysis_config_hash, status)
-values ('$document_id', '$cfg', 'queued')
-on conflict (document_id, analysis_config_hash) where status <> 'failed' do nothing;
-select pg_advisory_unlock(2000);
-select pg_advisory_lock(2000);
-select 'loser-select', count(*) from tender_analysis_jobs
- where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';
-select pg_advisory_unlock(2000);
-SQL
-
-wait "$pid_b"
-grep -F 'find-existing|0' "$tmp_a2" >/dev/null || { echo "expected find-existing to see no reusable job" >&2; cat "$tmp_a2" >&2; exit 1; }
-grep -F 'loser-select|0' "$tmp_a2" >/dev/null || { echo "expected loser-select to see no reusable job" >&2; cat "$tmp_a2" >&2; exit 1; }
-echo "PASS: replayed old shape ends with an empty job_id (the FOR UPDATE lock removes this window)"
-
-# ---------------------------------------------------------------------------
-# Test 3: the FOR UPDATE wait is bounded by lock_timeout (10s). A stuck holder
-# must make the create fail with 55P03 rather than block forever.
-# ---------------------------------------------------------------------------
-cfg='config-timeout'
-tmp_a3=$(mktemp)
-tmp_b3=$(mktemp)
-( "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c "begin; select document_id from tender_documents where document_id = '$document_id' for update; select pg_sleep(30); commit;" >/dev/null 2>&1 ) &
-pid_a=$!
-sleep 1
-if "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c "select create_tender_document_job($(job_json "$cfg"))::text;" >"$tmp_b3" 2>&1; then
-    echo "expected create to time out against a stuck document lock" >&2
-    kill "$pid_a" 2>/dev/null || true
-    wait "$pid_a" 2>/dev/null || true
-    exit 1
+# Test 1: A holds the document row after creating a new-config job. Start B
+# only after A signals readiness, observe B waiting on a PostgreSQL lock, then
+# commit A. Both function calls must return the same real job_id.
+cfg=config-new
+start_holder create_a "select jsonb_extract_path_text(create_tender_document_job($(job_json "$cfg")), 'job_id');"
+a_out=$holder_out
+worker_app="tender-concurrency-$owner"
+worker_out="$tmp_dir/create_b.out"
+worker_err="$tmp_dir/create_b.err"
+PGAPPNAME="$worker_app" "$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -c \
+    "select jsonb_extract_path_text(create_tender_document_job($(job_json "$cfg")), 'job_id');" \
+    >"$worker_out" 2>"$worker_err" &
+worker_pid=$!
+wait_for_db_lock "$worker_app" "$worker_pid"
+release_holder commit
+if ! wait "$worker_pid"; then
+    cat "$worker_err" >&2
+    fail 'concurrent create failed'
 fi
-# B timed out as expected; stop the holder early so the test does not wait.
-kill "$pid_a" 2>/dev/null || true
-wait "$pid_a" 2>/dev/null || true
-grep -E 'canceling statement due to lock timeout|55P03' "$tmp_b3" >/dev/null || {
-    echo "expected lock_timeout (55P03), got:" >&2
-    cat "$tmp_b3" >&2
-    exit 1
+worker_pid=
+a_job=$(sed -n '1p' "$a_out" | tr -d '[:space:]')
+b_job=$(sed -n '1p' "$worker_out" | tr -d '[:space:]')
+[ -n "$a_job" ] && [ "$a_job" = "$b_job" ] || fail "concurrent creates returned different or empty job IDs: $a_job / $b_job"
+count=$(q "select count(*) from tender_analysis_jobs where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';")
+[ "$count" = 1 ] || fail "expected one reusable job, found $count"
+echo 'PASS: two concurrent creates reuse one non-null job_id'
+
+# Test 2: replay the former three-statement algorithm in two persistent
+# sessions. The shell hands control between A and B after each SQL statement:
+# A finds none -> B inserts -> A conflicts -> B fails -> A finds none.
+cfg=config-race
+a_fifo="$tmp_dir/legacy_a.fifo"
+b_fifo="$tmp_dir/legacy_b.fifo"
+a_out="$tmp_dir/legacy_a.out"
+b_out="$tmp_dir/legacy_b.out"
+a_err="$tmp_dir/legacy_a.err"
+b_err="$tmp_dir/legacy_b.err"
+mkfifo "$a_fifo" "$b_fifo"
+"$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -f "$a_fifo" >"$a_out" 2>"$a_err" &
+session_a_pid=$!
+"$psql_bin" -X -v ON_ERROR_STOP=1 -qAt -f "$b_fifo" >"$b_out" 2>"$b_err" &
+session_b_pid=$!
+exec 4>"$a_fifo"
+exec 5>"$b_fifo"
+
+printf "select 'find-existing', count(*) from tender_analysis_jobs where document_id = '%s' and analysis_config_hash = '%s' and status <> 'failed';\n\\! touch %s\n" \
+    "$document_id" "$cfg" "$tmp_dir/legacy_a_found" >&4
+wait_for_file "$tmp_dir/legacy_a_found" "$session_a_pid" 'legacy A lookup'
+
+printf "insert into tender_analysis_jobs (document_id, analysis_config_hash, status) values ('%s', '%s', 'analyzing');\n\\! touch %s\n" \
+    "$document_id" "$cfg" "$tmp_dir/legacy_b_inserted" >&5
+wait_for_file "$tmp_dir/legacy_b_inserted" "$session_b_pid" 'legacy B insert'
+
+printf "with inserted as (insert into tender_analysis_jobs (document_id, analysis_config_hash, status) values ('%s', '%s', 'queued') on conflict (document_id, analysis_config_hash) where status <> 'failed' do nothing returning job_id) select 'inserted', count(*) from inserted;\n\\! touch %s\n" \
+    "$document_id" "$cfg" "$tmp_dir/legacy_a_conflicted" >&4
+wait_for_file "$tmp_dir/legacy_a_conflicted" "$session_a_pid" 'legacy A conflict'
+
+printf "update tender_analysis_jobs set status = 'failed' where document_id = '%s' and analysis_config_hash = '%s' and status <> 'failed';\n\\! touch %s\n" \
+    "$document_id" "$cfg" "$tmp_dir/legacy_b_failed" >&5
+wait_for_file "$tmp_dir/legacy_b_failed" "$session_b_pid" 'legacy B failure'
+
+printf "select 'loser-select', count(*) from tender_analysis_jobs where document_id = '%s' and analysis_config_hash = '%s' and status <> 'failed';\n\\! touch %s\n" \
+    "$document_id" "$cfg" "$tmp_dir/legacy_a_empty" >&4
+wait_for_file "$tmp_dir/legacy_a_empty" "$session_a_pid" 'legacy A reselect'
+exec 4>&- 5>&-
+if ! wait "$session_a_pid"; then cat "$a_err" >&2; fail 'legacy A failed'; fi
+session_a_pid=
+if ! wait "$session_b_pid"; then cat "$b_err" >&2; fail 'legacy B failed'; fi
+session_b_pid=
+grep -Fx 'find-existing|0' "$a_out" >/dev/null || fail 'legacy lookup did not see zero jobs'
+grep -Fx 'inserted|0' "$a_out" >/dev/null || fail 'legacy insert did not conflict'
+grep -Fx 'loser-select|0' "$a_out" >/dev/null || fail 'legacy reselect did not expose the empty-ID window'
+
+# The current function must create a real replacement after that failed job.
+replacement=$(q "select jsonb_extract_path_text(create_tender_document_job($(job_json "$cfg")), 'job_id');")
+[ -n "$replacement" ] || fail 'current create function returned an empty job_id'
+count=$(q "select count(*) from tender_analysis_jobs where document_id = '$document_id' and analysis_config_hash = '$cfg' and status <> 'failed';")
+[ "$count" = 1 ] || fail "expected one replacement job, found $count"
+echo 'PASS: controlled legacy interleaving exposes old empty-ID window; current function returns a real job'
+
+# Test 3: A holds the document row; B must fail with SQLSTATE 55P03 after the
+# function's 10-second lock_timeout. A watchdog makes a missing timeout fail
+# the test rather than hanging it indefinitely.
+cfg=config-timeout
+start_holder timeout_a "select document_id from tender_documents where document_id = '$document_id' for update;"
+worker_err="$tmp_dir/timeout_b.err"
+worker_out="$tmp_dir/timeout_b.out"
+PGAPPNAME="tender-timeout-$owner" "$psql_bin" -X -v ON_ERROR_STOP=1 -v VERBOSITY=verbose -qAt -c \
+    "select create_tender_document_job($(job_json "$cfg"))::text;" \
+    >"$worker_out" 2>"$worker_err" &
+worker_pid=$!
+( sleep 20; touch "$tmp_dir/watchdog_fired"; kill "$worker_pid" 2>/dev/null || true ) &
+watchdog_pid=$!
+if wait "$worker_pid"; then
+    fail 'create unexpectedly succeeded while document lock was held'
+fi
+worker_pid=
+kill "$watchdog_pid" 2>/dev/null || true
+wait "$watchdog_pid" 2>/dev/null || true
+watchdog_pid=
+release_holder rollback
+[ ! -f "$tmp_dir/watchdog_fired" ] || fail 'create hung past the watchdog deadline'
+grep -F '55P03' "$worker_err" >/dev/null || {
+    cat "$worker_err" >&2
+    fail 'expected SQLSTATE 55P03 from lock_timeout'
 }
-echo "PASS: document lock wait fails fast with lock timeout (55P03)"
+count=$(q "select count(*) from tender_analysis_jobs where document_id = '$document_id' and analysis_config_hash = '$cfg';")
+[ "$count" = 0 ] || fail 'timed-out create left a job behind'
+echo 'PASS: document lock wait ends with SQLSTATE 55P03'
 
 echo "all tender concurrency checks passed"
