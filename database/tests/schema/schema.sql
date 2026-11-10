@@ -691,9 +691,10 @@ select ok(exists (
     select 1
     from pg_index index_definition
     join pg_class index_relation on index_relation.oid = index_definition.indexrelid
-    where index_relation.relname = 'tender_analysis_jobs_active_config_idx'
+    where index_relation.relname = 'tender_analysis_jobs_reusable_config_idx'
       and index_definition.indisunique
-), 'tender_analysis_jobs_active_config_idx should be a unique partial index');
+      and index_definition.indpred is not null
+), 'tender_analysis_jobs_reusable_config_idx should be a unique partial index on non-failed jobs');
 
 select ok(exists (
     select 1

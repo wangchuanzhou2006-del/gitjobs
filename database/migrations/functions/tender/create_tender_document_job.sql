@@ -1,11 +1,18 @@
 -- Upserts a document without overwriting an existing one, and reuses an
 -- existing non-failed job (active, partial, or completed) for the same config.
+--
+-- Concurrency strategy: the job insert targets the partial unique index on
+-- reusable (non-failed) jobs with ON CONFLICT ... WHERE ... DO NOTHING, then
+-- the loser selects the winner. This makes concurrent creates for the same
+-- config idempotent without ever surfacing a unique-index error, and closes
+-- the race where a job completes between the lookup and the insert.
 create or replace function create_tender_document_job(p_input jsonb)
 returns jsonb as $$
 declare
     v_document_id uuid;
     v_document_created boolean;
     v_job_id uuid;
+    v_created boolean;
 begin
     if p_input is null or jsonb_typeof(p_input) <> 'object' then
         raise exception 'tender document job must be a JSON object' using errcode = '22023';
@@ -86,11 +93,27 @@ begin
         nullif(p_input->>'model_name', ''),
         nullif(p_input->>'prompt_version', '')
     )
+    on conflict (document_id, analysis_config_hash)
+        where status <> 'failed'
+        do nothing
     returning job_id into v_job_id;
+
+    if v_job_id is null then
+        select job_id into v_job_id
+        from tender_analysis_jobs
+        where document_id = v_document_id
+          and analysis_config_hash = (p_input->>'analysis_config_hash')
+          and status <> 'failed'
+        order by created_at
+        limit 1;
+        v_created := false;
+    else
+        v_created := true;
+    end if;
 
     return jsonb_build_object(
         'job_id', v_job_id,
-        'created', true,
+        'created', v_created,
         'document_created', v_document_created
     );
 end;

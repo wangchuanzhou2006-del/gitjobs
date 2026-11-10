@@ -44,9 +44,13 @@ create table tender_analysis_jobs (
     completed_at timestamptz
 );
 
-create unique index tender_analysis_jobs_active_config_idx
+-- At most one reusable (non-failed) job per document and config. An active,
+-- partial, or completed job is reused; only a failed job may be retried with a
+-- fresh row. This also forbids a create that races a completion from inserting
+-- a second job that would later collide with the report unique index.
+create unique index tender_analysis_jobs_reusable_config_idx
 on tender_analysis_jobs (document_id, analysis_config_hash)
-where status in ('queued', 'parsing', 'analyzing');
+where status <> 'failed';
 
 create table tender_analysis_reports (
     report_id uuid primary key default gen_random_uuid(),

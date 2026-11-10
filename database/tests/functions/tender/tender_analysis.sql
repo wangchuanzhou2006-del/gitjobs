@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(39);
 
 \set owner '00000000-0000-0000-0000-000000000601'
 \set other '00000000-0000-0000-0000-000000000602'
@@ -276,6 +276,27 @@ select is(
     'the owner lists their single project'
 );
 
+-- The reusable-config unique index must reject a second non-failed job for the
+-- same document and config. This is the database-level invariant that closes
+-- the completion race: even if a create's lookup and insert interleave with a
+-- completion, no active job can coexist with a completed/partial job.
+select throws_ok(
+    format(
+        $sql$
+        insert into tender_analysis_jobs (document_id, analysis_config_hash, status)
+        values (
+            (select document_id from tender_analysis_jobs where job_id = %L::uuid),
+            'config-v1',
+            'queued'
+        )
+        $sql$,
+        :'job_id'
+    ),
+    '23505',
+    null,
+    'the reusable-config unique index rejects a second non-failed job'
+);
+
 -- Part B: failed job, error-code whitelist, and expired-claim fencing.
 
 select create_tender_document_job(
@@ -391,51 +412,104 @@ select throws_ok(
     'an expired claim cannot fail the job'
 );
 
+-- A missing, null, non-string, or non-whitelisted error code is rejected with
+-- 22023 even when the job and claim are valid, and leaves the job untouched.
 select throws_ok(
-    $$
-    select fail_tender_analysis_job(
-        jsonb_build_object(
-            'job_id', '00000000-0000-0000-0000-000000000000',
-            'claim_token', '00000000-0000-0000-0000-000000000000',
-            'claim_version', 1
+    format(
+        $sql$
+        select fail_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint
+            )
         )
-    )
-    $$,
+        $sql$,
+        :'job2_id',
+        :'claim_token3',
+        :'claim_version3'
+    ),
     '22023',
     null,
-    'fail rejects a missing error code'
+    'fail rejects a missing error code on a real in-flight job'
+);
+select is(
+    (select status from tender_analysis_jobs where job_id = :'job2_id'::uuid),
+    'analyzing',
+    'a rejected fail leaves the job status unchanged'
+);
+select is(
+    (select claim_token from tender_analysis_jobs where job_id = :'job2_id'::uuid),
+    :'claim_token3'::uuid,
+    'a rejected fail leaves the claim token unchanged'
+);
+select is(
+    (select claim_version from tender_analysis_jobs where job_id = :'job2_id'::uuid),
+    :'claim_version3'::bigint,
+    'a rejected fail leaves the claim version unchanged'
 );
 
 select throws_ok(
-    $$
-    select fail_tender_analysis_job(
-        jsonb_build_object(
-            'job_id', '00000000-0000-0000-0000-000000000000',
-            'claim_token', '00000000-0000-0000-0000-000000000000',
-            'claim_version', 1,
-            'error_code', null
+    format(
+        $sql$
+        select fail_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint,
+                'error_code', null
+            )
         )
-    )
-    $$,
+        $sql$,
+        :'job2_id',
+        :'claim_token3',
+        :'claim_version3'
+    ),
     '22023',
     null,
-    'fail rejects a null error code'
+    'fail rejects a null error code on a real in-flight job'
 );
 
 select throws_ok(
-    $$
-    select fail_tender_analysis_job(
-        jsonb_build_object(
-            'job_id', '00000000-0000-0000-0000-000000000000',
-            'claim_token', '00000000-0000-0000-0000-000000000000',
-            'claim_version', 1,
-            'error_code', 'arbitrary_sentinel'
+    format(
+        $sql$
+        select fail_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint,
+                'error_code', 123
+            )
         )
-    )
-    $$,
+        $sql$,
+        :'job2_id',
+        :'claim_token3',
+        :'claim_version3'
+    ),
     '22023',
     null,
-    'fail rejects a non-whitelisted error code'
+    'fail rejects a non-string error code on a real in-flight job'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select fail_tender_analysis_job(
+            jsonb_build_object(
+                'job_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %L::bigint,
+                'error_code', 'arbitrary_sentinel'
+            )
+        )
+        $sql$,
+        :'job2_id',
+        :'claim_token3',
+        :'claim_version3'
+    ),
+    '22023',
+    null,
+    'fail rejects a non-whitelisted error code on a real in-flight job'
 );
 
 select fail_tender_analysis_job(

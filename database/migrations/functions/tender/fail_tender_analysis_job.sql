@@ -8,7 +8,8 @@ declare
     v_claim_version bigint;
     v_claim_expires_at timestamptz;
 begin
-    if jsonb_typeof(p_failure->'error_code') <> 'string'
+    if p_failure->'error_code' is null
+       or jsonb_typeof(p_failure->'error_code') <> 'string'
        or p_failure->>'error_code' not in (
            'invalid_pdf',
            'encrypted_pdf',
