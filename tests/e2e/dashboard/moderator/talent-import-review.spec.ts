@@ -252,6 +252,11 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     const queueNavigation = page.waitForURL("/dashboard/moderator/talent/review");
     await page.getByRole("button", { name: "重新整理" }).click();
     await queueNavigation;
+    await expect.poll(async () => {
+      const response = await page.request.get(`/dashboard/moderator/talent/review/${workflow.newItemId}`);
+      const html = await response.text();
+      return html.match(/<span class="border border-stone-300[^"]*">([^<]*)<\/span>/)?.[1]?.trim();
+    }, { timeout: 30_000 }).toBe("待查看");
     await openItem(page, workflow.newItemId);
     const after = Number(await page.locator('input[name="lock_version"]').first().inputValue());
     expect(after).toBeGreaterThan(before);
@@ -272,21 +277,32 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await openItem(page, workflow.itemIds.mediumFee);
     await page.locator('input[name="title"]').fill(editedTitle);
     await page.locator('input[name="skills"]').fill("服务员、食品安全、人工核对");
-    await page.getByRole("button", { name: "保存修改" }).click();
-    await openItem(page, workflow.itemIds.mediumFee);
+    await Promise.all([
+      page.waitForEvent("load"),
+      page.getByRole("button", { name: "保存修改" }).click(),
+    ]);
     await expect(page.locator('input[name="title"]')).toHaveValue(editedTitle);
-    await page.getByRole("button", { name: "确认发布" }).click();
+    await Promise.all([
+      page.waitForURL("/dashboard/moderator/talent/review"),
+      page.getByRole("button", { name: "确认发布" }).click(),
+    ]);
 
     await openItem(page, workflow.itemIds.highRisk);
     await page.locator("#reject-reason").selectOption("policy_violation");
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "驳回" }).click();
+    await Promise.all([
+      page.waitForURL("/dashboard/moderator/talent/review"),
+      page.getByRole("button", { name: "驳回" }).click(),
+    ]);
 
     await openItem(page, workflow.itemIds.duplicate);
     await page.getByText("更多处理", { exact: true }).click();
     await page.locator('input[name="target_record_id"]').fill(MERGE_TARGET_ID);
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "合并相似信息" }).click();
+    await Promise.all([
+      page.waitForURL("/dashboard/moderator/talent/review"),
+      page.getByRole("button", { name: "合并相似信息" }).click(),
+    ]);
 
     await openItem(page, workflow.itemIds.safeHiring);
     await page.getByText("更多处理", { exact: true }).click();
@@ -296,7 +312,10 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
         withdrawalRequests.push(request.url());
     });
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "撤回发布" }).click();
+    await Promise.all([
+      page.waitForURL("/dashboard/moderator/talent/review"),
+      page.getByRole("button", { name: "撤回发布" }).click(),
+    ]);
     await expect.poll(() => withdrawalRequests.length).toBe(1);
 
     await navigateWithRetries(

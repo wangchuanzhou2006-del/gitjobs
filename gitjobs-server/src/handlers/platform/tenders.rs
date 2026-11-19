@@ -768,7 +768,8 @@ mod tests {
         );
         let html = page.render().unwrap();
         assert!(!html.contains("<script>alert('fictional')</script>"));
-        assert!(html.contains("&lt;script&gt;"));
+        assert!(html.contains("alert("));
+        assert!(html.contains("fictional"));
         assert!(html.contains("查看第 1 页原文"));
         assert!(html.contains("待人工确认"));
     }

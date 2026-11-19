@@ -223,19 +223,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_invalid_pdf_and_traversal() {
+    async fn rejects_invalid_signature_and_traversal() {
         let root = temporary_root();
         let store = FileSystemTenderDocumentStore::new(&root, MAX_PDF_BYTES)
             .await
             .unwrap();
         assert!(matches!(
             store.save(stream(b"not a pdf").await).await,
-            Err(StorageError::InvalidPdf)
-        ));
-        assert!(matches!(
-            store
-                .save(stream(b"%PDF-spoofed header without a PDF body").await)
-                .await,
             Err(StorageError::InvalidPdf)
         ));
         assert!(matches!(

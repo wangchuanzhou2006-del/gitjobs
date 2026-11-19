@@ -278,6 +278,7 @@ mod tests {
     struct FakeClient {
         calls: Mutex<Vec<&'static str>>,
         parse_failures: AtomicUsize,
+        parse_error: Option<ClientError>,
         invalid_quote: bool,
     }
 
@@ -286,7 +287,15 @@ mod tests {
             Self {
                 calls: Mutex::new(Vec::new()),
                 parse_failures: AtomicUsize::new(parse_failures),
+                parse_error: None,
                 invalid_quote,
+            }
+        }
+
+        fn rejecting_pdf() -> Self {
+            Self {
+                parse_error: Some(ClientError::InvalidPdf),
+                ..Self::new(0, false)
             }
         }
     }
@@ -295,6 +304,9 @@ mod tests {
     impl TenderAnalysisClient for FakeClient {
         async fn parse(&self, _pdf: &[u8]) -> Result<ParsedDocument, ClientError> {
             self.calls.lock().unwrap().push("parse");
+            if let Some(error) = self.parse_error {
+                return Err(error);
+            }
             if self
                 .parse_failures
                 .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -422,6 +434,35 @@ mod tests {
             TenderProcessOutcome::Deferred
         );
         assert_eq!(*client.calls.lock().unwrap(), ["parse", "parse"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_pdf_from_parser_fails_without_retry_or_analysis() {
+        let claim = claim(1, TenderJobStatus::Parsing);
+        let mut db = MockDB::new();
+        db.expect_claim_tender_analysis_job()
+            .times(1)
+            .return_once(move || Ok(Some(claim)));
+        db.expect_transition_tender_analysis_job().never();
+        db.expect_complete_tender_analysis_job().never();
+        db.expect_fail_tender_analysis_job()
+            .times(1)
+            .withf(|input| input.error_code == "invalid_pdf")
+            .returning(|_| Ok(()));
+        let client = Arc::new(FakeClient::rejecting_pdf());
+        let processor = TenderProcessor::new(
+            Arc::new(db),
+            Arc::new(MemoryStore),
+            client.clone(),
+            Duration::from_secs(3),
+            "fixture".to_owned(),
+            "fixture-model".to_owned(),
+        );
+        assert_eq!(
+            processor.process_one().await.unwrap(),
+            TenderProcessOutcome::Failed
+        );
+        assert_eq!(*client.calls.lock().unwrap(), ["parse"]);
     }
 
     #[tokio::test]
