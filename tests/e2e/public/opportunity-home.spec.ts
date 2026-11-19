@@ -36,14 +36,17 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-theme", "dark");
   });
 
-  test("uses the five-item mobile navigation", async ({ page }) => {
+  test("keeps mobile navigation aligned with enabled destinations", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const nav = page.getByTestId("mobile-opportunity-nav");
     await expect(nav).toBeVisible();
-    await expect(nav.locator(":scope > *")).toHaveCount(5);
-    await expect(nav.getByRole("link")).toHaveCount(3);
+    const tenderEnabled = Boolean(process.env.GITJOBS_E2E_TENDER_ACCEPTANCE);
+    await expect(nav.locator(":scope > *")).toHaveCount(tenderEnabled ? 6 : 5);
+    await expect(nav.getByRole("link")).toHaveCount(tenderEnabled ? 4 : 3);
     await expect(nav.locator('[aria-disabled="true"]')).toHaveCount(2);
-    await expect(nav.locator(":scope > *")).toHaveText(["机会", "人才", "AI", "消息", "我的"]);
+    await expect(nav.locator(":scope > *")).toHaveText(
+      tenderEnabled ? ["机会", "人才", "招标", "AI", "消息", "我的"] : ["机会", "人才", "AI", "消息", "我的"],
+    );
     await expect(page.getByTestId("desktop-exploration-rail")).toBeHidden();
   });
 

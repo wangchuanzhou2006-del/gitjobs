@@ -80,6 +80,10 @@ pub(crate) struct State {
 
 /// Sets up the main application router and all sub-routers.
 #[instrument(skip_all, err)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the application router receives its shared service boundaries"
+)]
 pub(crate) async fn setup(
     cfg: HttpServerConfig,
     db: DynDB,
@@ -131,19 +135,7 @@ pub(crate) async fn setup(
         .nest("/dashboard/moderator", moderator_dashboard_router)
         .route("/dashboard/members/search", get(search_members))
         .route("/jobs/{job_id}/apply", post(jobboard::jobs::apply))
-        .route(
-            "/tenders",
-            get(platform::tenders::list).post(platform::tenders::create_project),
-        )
-        .route(
-            "/tenders/{project_id}/documents",
-            post(platform::tenders::upload)
-                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::disable())
-                .layer(RequestBodyLimitLayer::new(platform::tenders::MAX_REQUEST_BYTES)),
-        )
-        .route("/tenders/jobs/{job_id}/status", get(platform::tenders::status))
-        .route("/tenders/jobs/{job_id}/retry", post(platform::tenders::retry))
-        .route("/tenders/reports/{report_id}", get(platform::tenders::report))
+        .merge(tender_routes())
         .route_layer(login_required!(
             AuthnBackend,
             login_url = LOG_IN_URL,
@@ -217,6 +209,23 @@ pub(crate) async fn setup(
     }
 
     Ok(router.with_state(state))
+}
+
+fn tender_routes() -> Router<State> {
+    Router::new()
+        .route(
+            "/tenders",
+            get(platform::tenders::list).post(platform::tenders::create_project),
+        )
+        .route(
+            "/tenders/{project_id}/documents",
+            post(platform::tenders::upload)
+                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::disable())
+                .layer(RequestBodyLimitLayer::new(platform::tenders::MAX_REQUEST_BYTES)),
+        )
+        .route("/tenders/jobs/{job_id}/status", get(platform::tenders::status))
+        .route("/tenders/jobs/{job_id}/retry", post(platform::tenders::retry))
+        .route("/tenders/reports/{report_id}", get(platform::tenders::report))
 }
 
 /// Sets up the employer dashboard router and its routes.

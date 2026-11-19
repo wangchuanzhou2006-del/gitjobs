@@ -39,7 +39,7 @@ test.describe("talent workbench visual contract", () => {
     await expectFormalVisualDataset(page);
   });
 
-  test("shared navigation marks talent and keeps five mobile destinations", async ({
+  test("shared navigation marks talent and shows enabled destinations", async ({
     page,
   }) => {
     const rail = page.getByTestId("desktop-exploration-rail");
@@ -51,13 +51,15 @@ test.describe("talent workbench visual contract", () => {
     ).not.toHaveAttribute("aria-current", "page");
     await page.setViewportSize({ width: 390, height: 844 });
     const nav = page.getByTestId("mobile-opportunity-nav");
-    await expect(nav.locator(":scope > *")).toHaveText([
+    const destinations = [
       "\u673a\u4f1a",
       "\u4eba\u624d",
+      ...(process.env.GITJOBS_E2E_TENDER_ACCEPTANCE ? ["\u62db\u6807"] : []),
       "AI",
       "\u6d88\u606f",
       "\u6211\u7684",
-    ]);
+    ];
+    await expect(nav.locator(":scope > *")).toHaveText(destinations);
     await expect(
       nav.getByRole("link", { name: "\u4eba\u624d" }),
     ).toHaveAttribute("aria-current", "page");

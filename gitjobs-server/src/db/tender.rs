@@ -25,6 +25,7 @@ pub(crate) enum TenderJobStatus {
 }
 
 impl TenderJobStatus {
+    #[cfg(test)]
     const fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",

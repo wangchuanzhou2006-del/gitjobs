@@ -123,7 +123,7 @@ impl TenderDocumentStore for FileSystemTenderDocumentStore {
         let mut signature = [0_u8; 5];
         let mut signature_len = 0;
         let mut size = 0_u64;
-        let mut buffer = [0_u8; 64 * 1024];
+        let mut buffer = vec![0_u8; 64 * 1024];
         loop {
             let count = stream
                 .read(&mut buffer)
@@ -230,6 +230,12 @@ mod tests {
             .unwrap();
         assert!(matches!(
             store.save(stream(b"not a pdf").await).await,
+            Err(StorageError::InvalidPdf)
+        ));
+        assert!(matches!(
+            store
+                .save(stream(b"%PDF-spoofed header without a PDF body").await)
+                .await,
             Err(StorageError::InvalidPdf)
         ));
         assert!(matches!(

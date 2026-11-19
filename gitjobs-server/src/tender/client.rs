@@ -212,7 +212,7 @@ mod tests {
     ) -> (StatusCode, String) {
         assert_eq!(
             headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()),
-            Some(format!("Bearer {}", token).as_str())
+            Some(format!("Bearer {token}").as_str())
         );
         assert!(body.starts_with(b"--"));
         assert!(body.windows(5).any(|w| w == b"%PDF-"));

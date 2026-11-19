@@ -219,6 +219,16 @@ pub(crate) struct PromptVersions {
     pub review: String,
 }
 
+impl PromptVersions {
+    fn is_v1(&self) -> bool {
+        self.project_info == "tender-project-info-v1"
+            && self.qualifications == "tender-qualifications-v1"
+            && self.risks == "tender-risks-v1"
+            && self.materials == "tender-materials-v1"
+            && self.review == "tender-review-v1"
+    }
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Completeness {
@@ -257,11 +267,7 @@ impl TenderAnalysisV1 {
             || self.risks.len() > 200
             || self.required_materials.len() > 300
             || self.unknowns.len() > 200
-            || self.analysis_meta.prompt_versions.project_info != "tender-project-info-v1"
-            || self.analysis_meta.prompt_versions.qualifications != "tender-qualifications-v1"
-            || self.analysis_meta.prompt_versions.risks != "tender-risks-v1"
-            || self.analysis_meta.prompt_versions.materials != "tender-materials-v1"
-            || self.analysis_meta.prompt_versions.review != "tender-review-v1"
+            || !self.analysis_meta.prompt_versions.is_v1()
         {
             return Err(ContractError::Invalid);
         }

@@ -56,7 +56,7 @@ impl TenderItemProcessor for TenderProcessor {
 
 /// Starts the tender poller only when the integration is enabled.
 pub(crate) fn run_tender(
-    tender: Arc<TenderServices>,
+    tender: &TenderServices,
     task_tracker: &TaskTracker,
     cancellation_token: CancellationToken,
 ) {

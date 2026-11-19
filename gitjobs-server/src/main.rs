@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
         &task_tracker,
         cancellation_token.clone(),
     );
-    workers::run_tender(tender_services.clone(), &task_tracker, cancellation_token.clone());
+    workers::run_tender(&tender_services, &task_tracker, cancellation_token.clone());
 
     // Setup and launch the HTTP server.
     let router = router::setup(

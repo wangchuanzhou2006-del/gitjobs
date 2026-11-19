@@ -195,7 +195,7 @@ pub(crate) async fn upload(
     // Neither the handler nor Axum's field API collects the 50 MiB body in memory.
     let (mut writer, reader) = tokio::io::duplex(64 * 1024);
     let save = storage.save(Box::pin(reader));
-    let pump = async {
+    let pump = async move {
         loop {
             match field.chunk().await {
                 Ok(Some(chunk)) => writer.write_all(&chunk).await.map_err(|_| ())?,
@@ -239,20 +239,14 @@ pub(crate) async fn upload(
             prompt_version: Some("tender-project-info-v1".to_owned()),
         })
         .await;
-    match outcome {
-        Ok(outcome) => {
-            if !outcome.document_created && storage.delete(&saved.storage_key).await.is_err() {
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            private_response(
-                Redirect::to(&format!("/tenders/jobs/{}/status", outcome.job_id)).into_response(),
-            )
-        }
-        Err(_) => {
-            let _ = storage.delete(&saved.storage_key).await;
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+    let Ok(outcome) = outcome else {
+        let _ = storage.delete(&saved.storage_key).await;
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    if !outcome.document_created && storage.delete(&saved.storage_key).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    private_response(Redirect::to(&format!("/tenders/jobs/{}/status", outcome.job_id)).into_response())
 }
 
 pub(crate) async fn status(
@@ -468,14 +462,7 @@ fn report_page(
     project_title: String,
     report: TenderAnalysisV1,
 ) -> TenderReportPage {
-    let facts = vec![
-        fact_view("项目名称", &report.project_info.project_name),
-        fact_view("采购单位", &report.project_info.procurement_entity),
-        fact_view("预算金额", &report.project_info.budget_amount),
-        fact_view("预算币种", &report.project_info.budget_currency),
-        fact_view("服务期限", &report.project_info.service_period),
-        fact_view("投标截止时间", &report.project_info.bid_deadline),
-    ];
+    let facts = project_facts(&report);
     let qualifications: Vec<TenderQualificationView> = report
         .qualifications
         .iter()
@@ -574,12 +561,24 @@ fn report_page(
     }
 }
 
+fn project_facts(report: &TenderAnalysisV1) -> Vec<TenderFactView> {
+    vec![
+        fact_view("项目名称", &report.project_info.project_name),
+        fact_view("采购单位", &report.project_info.procurement_entity),
+        fact_view("预算金额", &report.project_info.budget_amount),
+        fact_view("预算币种", &report.project_info.budget_currency),
+        fact_view("服务期限", &report.project_info.service_period),
+        fact_view("投标截止时间", &report.project_info.bid_deadline),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+    use std::time::Duration;
 
     use async_trait::async_trait;
     use axum::{
@@ -729,8 +728,9 @@ mod tests {
             .build()
             .await;
         let body = b"--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"sample.pdf\"\r\nContent-Type: application/pdf\r\n\r\n%PDF-fictional\r\n--b--\r\n";
-        let response = router
-            .oneshot(
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            router.oneshot(
                 Request::builder()
                     .method("POST")
                     .uri(format!("/tenders/{project_id}/documents"))
@@ -739,9 +739,11 @@ mod tests {
                     .header("content-type", "multipart/form-data; boundary=b")
                     .body(Body::from(body.as_slice()))
                     .unwrap(),
-            )
-            .await
-            .unwrap();
+            ),
+        )
+        .await
+        .expect("upload must finish after the multipart stream ends")
+        .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response.headers()["location"],

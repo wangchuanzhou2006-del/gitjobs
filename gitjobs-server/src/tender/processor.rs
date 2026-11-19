@@ -111,7 +111,7 @@ impl TenderProcessor {
                     next_status: TenderJobStatus::Analyzing,
                 })
                 .await
-                .map_err(classify_db_error)?;
+                .map_err(|error| classify_db_error(&error))?;
         }
         let report = match self.analyze_with_one_retry(&claim, &document).await {
             Ok(report) => report,
@@ -131,9 +131,8 @@ impl TenderProcessor {
             Completeness::Complete => TenderJobStatus::Completed,
             Completeness::Partial => TenderJobStatus::Partial,
         };
-        let result = match serde_json::to_value(&report) {
-            Ok(result) => result,
-            Err(_) => return self.handle_error(&claim, "invalid_analysis_contract", false).await,
+        let Ok(result) = serde_json::to_value(&report) else {
+            return self.handle_error(&claim, "invalid_analysis_contract", false).await;
         };
         let report_id = self
             .db
@@ -145,7 +144,7 @@ impl TenderProcessor {
                 result,
             })
             .await
-            .map_err(classify_db_error)?;
+            .map_err(|error| classify_db_error(&error))?;
         Ok(TenderProcessOutcome::Completed(report_id))
     }
 
@@ -206,7 +205,7 @@ impl TenderProcessor {
                 error_code: code.to_owned(),
             })
             .await
-            .map_err(classify_db_error)?;
+            .map_err(|error| classify_db_error(&error))?;
         Ok(TenderProcessOutcome::Failed)
     }
 }
@@ -230,7 +229,7 @@ fn client_error_code(error: ClientError) -> &'static str {
     }
 }
 
-fn classify_db_error(error: anyhow::Error) -> TenderProcessError {
+fn classify_db_error(error: &anyhow::Error) -> TenderProcessError {
     if error
         .chain()
         .filter_map(|source| source.downcast_ref::<tokio_postgres::Error>())
