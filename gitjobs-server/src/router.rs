@@ -198,7 +198,10 @@ pub(crate) async fn setup(
             HeaderValue::from_static(CACHE_CONTROL_NO_CACHE),
         ));
 
-    // Setup basic auth
+    Ok(with_basic_auth(router, &cfg).with_state(state))
+}
+
+fn with_basic_auth(mut router: Router<State>, cfg: &HttpServerConfig) -> Router<State> {
     if let Some(basic_auth) = &cfg.basic_auth
         && basic_auth.enabled
     {
@@ -207,8 +210,7 @@ pub(crate) async fn setup(
             basic_auth.password.as_str(),
         )));
     }
-
-    Ok(router.with_state(state))
+    router
 }
 
 fn tender_routes() -> Router<State> {

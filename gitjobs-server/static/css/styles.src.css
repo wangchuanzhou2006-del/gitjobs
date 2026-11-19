@@ -1007,6 +1007,9 @@ textarea:disabled + .EasyMDEContainer .editor-toolbar button {
     padding: 0.8rem 0.35rem max(0.8rem, env(safe-area-inset-bottom));
     text-align: center;
   }
+  .opportunity-mobile-nav--six {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
   .opportunity-mobile-nav [aria-current="page"] {
     color: var(--opp-interactive);
     font-weight: 750;

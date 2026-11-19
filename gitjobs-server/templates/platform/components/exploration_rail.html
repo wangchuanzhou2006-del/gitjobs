@@ -28,7 +28,7 @@
           aria-label="切换深色沉浸模式">明暗</button>
 </aside>
 
-<nav class="opportunity-mobile-nav opportunity-surface"
+<nav class="opportunity-mobile-nav opportunity-surface{% if cfg.tender_enabled %} opportunity-mobile-nav--six{% endif %}"
      data-testid="mobile-opportunity-nav"
      aria-label="移动主导航">
   <a class="opportunity-focus"

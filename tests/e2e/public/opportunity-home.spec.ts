@@ -47,6 +47,8 @@ test.describe("opportunity constellation foundation", () => {
     await expect(nav.locator(":scope > *")).toHaveText(
       tenderEnabled ? ["机会", "人才", "招标", "AI", "消息", "我的"] : ["机会", "人才", "AI", "消息", "我的"],
     );
+    const columns = await nav.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
+    expect(columns).toBe(tenderEnabled ? 6 : 5);
     await expect(page.getByTestId("desktop-exploration-rail")).toBeHidden();
   });
 
