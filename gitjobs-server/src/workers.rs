@@ -11,9 +11,15 @@ use tracing::{debug, error};
 use crate::{
     db::DynDB,
     talent::{ProcessError, ProcessOutcome, TalentServices},
+    tender::{
+        TenderServices,
+        processor::{TenderProcessError, TenderProcessOutcome, TenderProcessor},
+    },
 };
 
 const TALENT_MAX_CONCURRENCY: usize = 4;
+const TENDER_MAX_CONCURRENCY: usize = 2;
+const TENDER_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const TALENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const TALENT_CLEANUP_INTERVAL: Duration = Duration::from_hours(24);
 const TALENT_SOURCE_POLL_INTERVAL: Duration = Duration::from_mins(1);
@@ -33,6 +39,81 @@ trait TalentItemProcessor: Send + Sync {
 impl TalentItemProcessor for crate::talent::TalentProcessor {
     async fn process_one(&self) -> Result<ProcessOutcome, ProcessError> {
         crate::talent::TalentProcessor::process_one(self).await
+    }
+}
+
+#[async_trait]
+trait TenderItemProcessor: Send + Sync {
+    async fn process_one(&self) -> Result<TenderProcessOutcome, TenderProcessError>;
+}
+
+#[async_trait]
+impl TenderItemProcessor for TenderProcessor {
+    async fn process_one(&self) -> Result<TenderProcessOutcome, TenderProcessError> {
+        TenderProcessor::process_one(self).await
+    }
+}
+
+/// Starts the tender poller only when the integration is enabled.
+pub(crate) fn run_tender(
+    tender: Arc<TenderServices>,
+    task_tracker: &TaskTracker,
+    cancellation_token: CancellationToken,
+) {
+    if let Some(processor) = &tender.processor {
+        let processor = processor.clone();
+        task_tracker.spawn(async move {
+            tender_processor_worker_with(processor, cancellation_token).await;
+        });
+    }
+}
+
+async fn tender_processor_worker_with<P>(processor: Arc<P>, cancellation_token: CancellationToken)
+where
+    P: TenderItemProcessor + 'static,
+{
+    let permits = Arc::new(Semaphore::new(TENDER_MAX_CONCURRENCY));
+    loop {
+        if cancellation_token.is_cancelled() {
+            break;
+        }
+        let mut tasks = JoinSet::new();
+        for _ in 0..TENDER_MAX_CONCURRENCY {
+            let permit = permits
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("tender worker semaphore is never closed");
+            let processor = processor.clone();
+            tasks.spawn(async move {
+                let _permit = permit;
+                processor.process_one().await
+            });
+        }
+        let mut found_work = false;
+        while !tasks.is_empty() {
+            tokio::select! {
+                () = cancellation_token.cancelled() => {
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    return;
+                }
+                result = tasks.join_next() => {
+                    match result {
+                        Some(Ok(Ok(TenderProcessOutcome::NoWork))) | None => {}
+                        Some(Ok(Ok(_))) => found_work = true,
+                        Some(Ok(Err(error))) => error!(%error, "tender processing failed"),
+                        Some(Err(_)) => error!("tender processing task panicked"),
+                    }
+                }
+            }
+        }
+        if !found_work {
+            tokio::select! {
+                () = sleep(TENDER_POLL_INTERVAL) => {}
+                () = cancellation_token.cancelled() => break,
+            }
+        }
     }
 }
 
@@ -211,9 +292,12 @@ mod tests {
     use crate::{
         db::{DynDB, mock::MockDB},
         talent::{ProcessError, ProcessOutcome},
+        tender::processor::{TenderProcessError, TenderProcessOutcome},
     };
 
-    use super::{TalentItemProcessor, talent_processor_worker_with};
+    use super::{
+        TalentItemProcessor, TenderItemProcessor, talent_processor_worker_with, tender_processor_worker_with,
+    };
 
     struct ActiveGuard(Arc<AtomicUsize>);
 
@@ -228,6 +312,51 @@ mod tests {
         active: Arc<AtomicUsize>,
         maximum: AtomicUsize,
         cancellation: CancellationToken,
+    }
+
+    struct RecoveringTenderProcessor {
+        calls: AtomicUsize,
+        active: Arc<AtomicUsize>,
+        maximum: AtomicUsize,
+        cancellation: CancellationToken,
+    }
+
+    #[async_trait]
+    impl TenderItemProcessor for RecoveringTenderProcessor {
+        async fn process_one(&self) -> Result<TenderProcessOutcome, TenderProcessError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.maximum.fetch_max(active, Ordering::SeqCst);
+            let _guard = ActiveGuard(self.active.clone());
+            if call == 0 {
+                std::panic::resume_unwind(Box::new(()));
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if call >= 4 {
+                self.cancellation.cancel();
+            }
+            Ok(TenderProcessOutcome::Failed)
+        }
+    }
+
+    #[tokio::test]
+    async fn tender_worker_releases_panicked_permit_and_bounds_concurrency() {
+        let cancellation = CancellationToken::new();
+        let processor = Arc::new(RecoveringTenderProcessor {
+            calls: AtomicUsize::new(0),
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: AtomicUsize::new(0),
+            cancellation: cancellation.clone(),
+        });
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tender_processor_worker_with(processor.clone(), cancellation),
+        )
+        .await
+        .expect("tender worker should stop after cancellation");
+        assert!(processor.calls.load(Ordering::SeqCst) >= 5);
+        assert!(processor.maximum.load(Ordering::SeqCst) <= 2);
+        assert_eq!(processor.active.load(Ordering::SeqCst), 0);
     }
 
     #[async_trait]

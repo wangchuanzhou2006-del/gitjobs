@@ -39,3 +39,13 @@ server:
     ai:
       base_url: https://api.example.invalid/v1
       model: invalid-model-name
+  # Tender analysis remains off until private storage and the internal service are configured.
+  # GITJOBS_SERVER__TENDER__DOCUMENT_DIR=<ABSOLUTE-PRIVATE-DIRECTORY>
+  # GITJOBS_SERVER__TENDER__ANALYSIS_BASE_URL=https://internal-analysis.example.invalid/
+  # GITJOBS_SERVER__TENDER__INTERNAL_SERVICE_TOKEN=<GENERATE-A-RANDOM-32-BYTE-SECRET>
+  # GITJOBS_SERVER__TENDER__MODEL_PROVIDER=<SAME-AS-INTERNAL-SERVICE>
+  # GITJOBS_SERVER__TENDER__MODEL_NAME=<SAME-AS-INTERNAL-SERVICE>
+  tender:
+    enabled: false
+    max_upload_bytes: 52428800
+    request_timeout_seconds: 300

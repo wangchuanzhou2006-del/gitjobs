@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block document_language %}zh-CN{% endblock document_language %}
+{% block page_title %}分析进度 · GitJobs{% endblock page_title %}
+{% block content %}
+<main id="main-content" class="mx-auto max-w-3xl px-4 py-10 text-[#10283d]">
+  <a class="text-sm font-semibold underline underline-offset-2" href="/tenders">← 返回招标项目</a>
+  <h1 class="mt-8 mb-5 text-3xl font-semibold" style="font-family: 'Noto Serif SC', 'Songti SC', serif">文件处理进度</h1>
+  {% include "platform/tenders/components/status.html" %}
+</main>
+{% endblock content %}

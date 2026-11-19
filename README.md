@@ -27,6 +27,10 @@ It is also possible to **embed a single job**. To do this, you can click on the 
 
 ![Single job embed](docs/screenshots/embed_job.svg)
 
+## Tender document analysis
+
+The optional tender workflow lives in the existing GitJobs account and website at `/tenders`. It accepts a private PDF and produces a page-cited report through an internal analysis service. It is disabled unless explicitly configured. See the [operator guide](docs/operations/tender-analysis.md) for deployment, model settings, limits, and data-handling requirements.
+
 ## Contributing
 
 Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.

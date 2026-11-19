@@ -431,6 +431,7 @@ mock! {
             &self,
             input: crate::db::tender::NewTenderDocumentJob,
         ) -> Result<crate::db::tender::CreateJobOutcome>;
+        async fn retry_tender_analysis_job(&self, user_id: Uuid, failed_job_id: Uuid) -> Result<Option<Uuid>>;
         async fn claim_tender_analysis_job(
             &self,
         ) -> Result<Option<crate::db::tender::ClaimedTenderJob>>;
@@ -455,6 +456,7 @@ mock! {
             &self,
             user_id: Uuid,
         ) -> Result<Vec<crate::db::tender::TenderProjectRow>>;
+        async fn list_tender_jobs(&self, user_id: Uuid) -> Result<Vec<crate::db::tender::TenderJobView>>;
         async fn get_tender_report(
             &self,
             user_id: Uuid,

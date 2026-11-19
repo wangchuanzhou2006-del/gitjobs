@@ -8,14 +8,39 @@ declare
     v_job jsonb;
     v_claim_lease constant interval := interval '10 minutes';
 begin
+    -- A crash or cancellation during the third claim leaves an expired
+    -- in-flight row. Retire it without issuing a fourth claim or another
+    -- model call. SKIP LOCKED keeps concurrent workers from waiting here.
+    with exhausted as (
+        select job_id
+        from tender_analysis_jobs
+        where attempt_count >= 3
+          and (
+              status = 'queued'
+              or (status in ('parsing', 'analyzing')
+                  and (claim_expires_at is null or claim_expires_at <= current_timestamp))
+          )
+        for update skip locked
+        limit 100
+    )
+    update tender_analysis_jobs job
+    set status = 'failed',
+        error_code = 'analysis_unavailable',
+        claim_token = null,
+        claim_expires_at = null,
+        updated_at = current_timestamp
+    from exhausted
+    where job.job_id = exhausted.job_id;
+
     with next_job as (
         select job_id
         from tender_analysis_jobs
-        where status = 'queued'
+        where attempt_count < 3
+          and (status = 'queued'
            or (
                status in ('parsing', 'analyzing')
                and (claim_expires_at is null or claim_expires_at <= current_timestamp)
-           )
+           ))
         order by
             case when status = 'queued' then 0 else 1 end,
             created_at

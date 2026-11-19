@@ -16,6 +16,7 @@ use crate::{
     auth::User as AuthUser,
     config::{
         CookieConfig, HttpServerConfig, LoginOptions, SecretValue, TalentConfig, TalentEncryptionConfig,
+        TenderConfig,
     },
     db::{DynDB, dashboard::employer::ApplicationsSearchOutput, jobboard::JobsSearchOutput, mock::MockDB},
     event_tracker::{Event, MockEventTracker},
@@ -44,6 +45,7 @@ use crate::{
         },
         misc::{Certification, Foundation, Location, Member, Project},
     },
+    tender::TenderServices,
 };
 
 /// Builder for test router configuration.
@@ -55,6 +57,7 @@ pub(crate) struct TestRouterBuilder {
     image_store: Option<MockImageStore>,
     notifications_manager: Option<MockNotificationsManager>,
     talent_worker_enabled: bool,
+    tender: Option<Arc<TenderServices>>,
 }
 
 struct TestTalentAi;
@@ -103,6 +106,7 @@ impl TestRouterBuilder {
             notifications_manager,
             event_tracker,
             talent,
+            self.tender.unwrap_or_else(TenderServices::disabled),
             http_client,
         )
         .await
@@ -118,6 +122,7 @@ impl TestRouterBuilder {
             image_store: None,
             notifications_manager: Some(notifications_manager),
             talent_worker_enabled: false,
+            tender: None,
         }
     }
 
@@ -130,6 +135,12 @@ impl TestRouterBuilder {
     /// Sets a custom HTTP server configuration.
     pub(crate) fn with_cfg(mut self, cfg: HttpServerConfig) -> Self {
         self.cfg = Some(cfg);
+        self
+    }
+
+    /// Supplies deterministic tender storage; handler tests never start the poller.
+    pub(crate) fn with_tender_services(mut self, tender: Arc<TenderServices>) -> Self {
+        self.tender = Some(tender);
         self
     }
 
@@ -571,6 +582,7 @@ pub(crate) fn test_http_server_cfg() -> HttpServerConfig {
             },
             ai: None,
         },
+        tender: TenderConfig::default(),
 
         analytics: None,
         basic_auth: None,

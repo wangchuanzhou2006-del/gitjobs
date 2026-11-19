@@ -6,7 +6,7 @@ use anyhow::Result;
 use axum::{
     Extension, Router,
     body::Body,
-    extract::FromRef,
+    extract::{DefaultBodyLimit, FromRef},
     http::{
         HeaderValue, Request, Response, StatusCode, Uri,
         header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, WWW_AUTHENTICATE},
@@ -23,6 +23,7 @@ use rust_embed::Embed;
 use serde_qs::axum::{QsQueryConfig, QsQueryRejection};
 use tower::ServiceBuilder;
 use tower_http::{
+    limit::RequestBodyLimitLayer,
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
     validate_request::{ValidateRequest, ValidateRequestHeaderLayer},
@@ -43,6 +44,7 @@ use crate::{
     img::DynImageStore,
     notifications::DynNotificationsManager,
     talent::TalentServices,
+    tender::TenderServices,
 };
 
 /// Embeds static files from the "static" folder into the binary.
@@ -72,6 +74,8 @@ pub(crate) struct State {
     pub http_client: Client,
     /// Talent import, review, and background processing services.
     pub talent: Arc<TalentServices>,
+    /// Private tender storage and background analysis services.
+    pub tender: Arc<TenderServices>,
 }
 
 /// Sets up the main application router and all sub-routers.
@@ -83,6 +87,7 @@ pub(crate) async fn setup(
     notifications_manager: DynNotificationsManager,
     event_tracker: DynEventTracker,
     talent: Arc<TalentServices>,
+    tender: Arc<TenderServices>,
     http_client: Client,
 ) -> Result<Router> {
     // Setup router state
@@ -96,6 +101,7 @@ pub(crate) async fn setup(
         notifications_manager,
         serde_qs_de,
         talent,
+        tender,
     };
 
     // Setup authentication / authorization layer
@@ -125,6 +131,19 @@ pub(crate) async fn setup(
         .nest("/dashboard/moderator", moderator_dashboard_router)
         .route("/dashboard/members/search", get(search_members))
         .route("/jobs/{job_id}/apply", post(jobboard::jobs::apply))
+        .route(
+            "/tenders",
+            get(platform::tenders::list).post(platform::tenders::create_project),
+        )
+        .route(
+            "/tenders/{project_id}/documents",
+            post(platform::tenders::upload)
+                .layer(DefaultBodyLimit::disable())
+                .layer(RequestBodyLimitLayer::new(platform::tenders::MAX_REQUEST_BYTES)),
+        )
+        .route("/tenders/jobs/{job_id}/status", get(platform::tenders::status))
+        .route("/tenders/jobs/{job_id}/retry", post(platform::tenders::retry))
+        .route("/tenders/reports/{report_id}", get(platform::tenders::report))
         .route_layer(login_required!(
             AuthnBackend,
             login_url = LOG_IN_URL,

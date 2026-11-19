@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(57);
 
 \set owner '00000000-0000-0000-0000-000000000601'
 \set other '00000000-0000-0000-0000-000000000602'
@@ -582,6 +582,110 @@ select is(
        and status <> 'failed'),
     1::bigint,
     'only one non-failed job exists for a failed config'
+);
+
+-- A report link and full job history are scoped to the owner.
+select is(
+    get_tender_analysis_job(:'owner', :'job_id'::uuid)->>'report_id',
+    :'report_id',
+    'owned completed job includes its report link'
+);
+select is(
+    get_tender_analysis_job(:'other', :'job_id'::uuid),
+    null,
+    'another user cannot obtain the report link through job status'
+);
+select is(jsonb_array_length(list_tender_jobs(:'owner')), 3, 'owner lists all three job records');
+select is(jsonb_array_length(list_tender_jobs(:'other')), 0, 'other user sees no tender jobs');
+select is(
+    retry_tender_analysis_job(:'owner', :'job2_id'::uuid),
+    :'retry_job_id'::uuid,
+    'retry reuses an already queued replacement'
+);
+select is(
+    retry_tender_analysis_job(:'other', :'job2_id'::uuid),
+    null,
+    'another user cannot retry a failed job'
+);
+select is(
+    retry_tender_analysis_job(:'owner', :'job_id'::uuid),
+    null,
+    'a completed job cannot be retried'
+);
+
+-- The retry endpoint also creates a replacement when no other job exists.
+select create_tender_document_job(jsonb_build_object(
+    'user_id', :'owner', 'project_id', :'project_id',
+    'storage_key', 'docs/key3.pdf',
+    'sha256', '0000000000000000000000000000000000000000000000000000000000000003',
+    'size_bytes', 10, 'filename', 'third.pdf',
+    'analysis_config_hash', 'config-v3'
+)) as job3_result
+\gset
+
+select jsonb_extract_path_text(:'job3_result'::jsonb, 'job_id') as job3_id
+\gset
+
+update tender_analysis_jobs set status = 'failed', error_code = 'invalid_pdf'
+where job_id = :'job3_id'::uuid;
+
+select retry_tender_analysis_job(:'owner', :'job3_id'::uuid) as retried3_id
+\gset
+
+select isnt(:'retried3_id'::uuid, :'job3_id'::uuid, 'retry creates a fresh job after failure');
+select is(
+    (select status from tender_analysis_jobs where job_id = :'retried3_id'::uuid),
+    'queued',
+    'new retry is queued for processing'
+);
+select is(
+    (select count(*) from tender_analysis_jobs
+     where document_id = (select document_id from tender_analysis_jobs where job_id = :'job3_id'::uuid)
+       and analysis_config_hash = 'config-v3' and status <> 'failed'),
+    1::bigint,
+    'retry preserves at most one non-failed job per document and config'
+);
+select is(
+    retry_tender_analysis_job(:'owner', :'job3_id'::uuid),
+    :'retried3_id'::uuid,
+    'repeating retry returns the same replacement job'
+);
+
+-- A worker that dies during its third attempt must not leave a job that can
+-- be claimed for a fourth paid analysis after the lease expires.
+select create_tender_document_job(jsonb_build_object(
+    'user_id', :'owner', 'project_id', :'project_id',
+    'storage_key', 'docs/key4.pdf',
+    'sha256', '0000000000000000000000000000000000000000000000000000000000000004',
+    'size_bytes', 10, 'filename', 'fourth.pdf',
+    'analysis_config_hash', 'config-v4'
+)) as exhausted_result
+\gset
+
+select jsonb_extract_path_text(:'exhausted_result'::jsonb, 'job_id') as exhausted_job_id
+\gset
+
+update tender_analysis_jobs
+set status = 'analyzing', attempt_count = 3,
+    claim_token = gen_random_uuid(), claim_version = 3,
+    claim_expires_at = current_timestamp - interval '1 second'
+where job_id = :'exhausted_job_id'::uuid;
+
+select claim_tender_analysis_job();
+select is(
+    (select status from tender_analysis_jobs where job_id = :'exhausted_job_id'::uuid),
+    'failed',
+    'expired third attempt becomes terminal instead of being reclaimed'
+);
+select is(
+    (select attempt_count from tender_analysis_jobs where job_id = :'exhausted_job_id'::uuid),
+    3,
+    'an exhausted job never receives a fourth attempt'
+);
+select is(
+    (select error_code from tender_analysis_jobs where job_id = :'exhausted_job_id'::uuid),
+    'analysis_unavailable',
+    'exhausted lease stores only a safe error code'
 );
 
 select * from finish();

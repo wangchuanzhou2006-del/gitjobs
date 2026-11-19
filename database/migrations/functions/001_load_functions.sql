@@ -103,12 +103,14 @@
 
 {{ template "tender/create_tender_project.sql" }}
 {{ template "tender/create_tender_document_job.sql" }}
+{{ template "tender/retry_tender_analysis_job.sql" }}
 {{ template "tender/claim_tender_analysis_job.sql" }}
 {{ template "tender/transition_tender_analysis_job.sql" }}
 {{ template "tender/complete_tender_analysis_job.sql" }}
 {{ template "tender/fail_tender_analysis_job.sql" }}
 {{ template "tender/get_tender_analysis_job.sql" }}
 {{ template "tender/list_tender_projects.sql" }}
+{{ template "tender/list_tender_jobs.sql" }}
 {{ template "tender/get_tender_report.sql" }}
 
 {{ template "workers/archive_expired_jobs.sql" }}

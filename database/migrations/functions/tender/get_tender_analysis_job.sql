@@ -19,8 +19,10 @@ begin
             job.attempt_count,
             job.created_at,
             job.updated_at,
-            job.completed_at
+            job.completed_at,
+            report.report_id
         from tender_analysis_jobs job
+        left join tender_analysis_reports report on report.job_id = job.job_id
         join tender_documents document on document.document_id = job.document_id
         join tender_projects project on project.project_id = document.project_id
         where job.job_id = p_job_id

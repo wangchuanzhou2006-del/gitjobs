@@ -23,6 +23,7 @@ use crate::{
     config::{Config, LogFormat},
     db::PgDB,
     talent::TalentServices,
+    tender::TenderServices,
 };
 
 mod auth;
@@ -35,6 +36,7 @@ mod notifications;
 mod router;
 mod talent;
 mod templates;
+mod tender;
 mod validation;
 mod workers;
 
@@ -113,6 +115,9 @@ async fn main() -> Result<()> {
     let http_client = Client::new();
     let talent_services = TalentServices::from_config(db.clone(), &cfg.server.talent, http_client.clone())
         .context("error setting up talent services")?;
+    let tender_services = TenderServices::from_config(db.clone(), &cfg.server.tender)
+        .await
+        .context("error setting up tender services")?;
 
     // Run additional background workers.
     workers::run(
@@ -124,6 +129,7 @@ async fn main() -> Result<()> {
         &task_tracker,
         cancellation_token.clone(),
     );
+    workers::run_tender(tender_services.clone(), &task_tracker, cancellation_token.clone());
 
     // Setup and launch the HTTP server.
     let router = router::setup(
@@ -133,6 +139,7 @@ async fn main() -> Result<()> {
         notifications_manager,
         event_tracker,
         talent_services,
+        tender_services,
         http_client,
     )
     .await?;

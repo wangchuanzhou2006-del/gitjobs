@@ -1,6 +1,11 @@
 //! This module defines types to represent the server configuration.
 
-use std::{collections::HashMap, fmt, net::IpAddr, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::IpAddr,
+    path::{Component, PathBuf},
+};
 
 use anyhow::Result;
 use deadpool_postgres::Config as DbConfig;
@@ -106,6 +111,9 @@ pub(crate) struct HttpServerConfig {
     /// Talent import data protection configuration.
     #[serde(default)]
     pub talent: TalentConfig,
+    /// Private tender analysis integration, disabled unless configured.
+    #[serde(default)]
+    pub tender: TenderConfig,
 
     /// Optional analytics configuration.
     pub analytics: Option<AnalyticsConfig>,
@@ -208,6 +216,124 @@ pub(crate) struct OidcProviderConfig {
     pub redirect_uri: String,
     /// Scopes requested from the provider.
     pub scopes: Vec<String>,
+}
+
+/// Tender integration settings. Disabled configurations do not retain credentials.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct TenderConfig {
+    pub enabled: bool,
+    pub settings: Option<TenderEnabledConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TenderEnabledConfig {
+    pub document_dir: PathBuf,
+    pub analysis_base_url: reqwest::Url,
+    pub internal_service_token: SecretValue,
+    pub model_provider: String,
+    pub model_name: String,
+    pub max_upload_bytes: u64,
+    pub request_timeout_seconds: u64,
+}
+
+#[derive(Deserialize)]
+struct TenderConfigRepr {
+    #[serde(default)]
+    enabled: bool,
+    document_dir: Option<PathBuf>,
+    analysis_base_url: Option<String>,
+    #[serde(default)]
+    allow_local_http: bool,
+    internal_service_token: Option<SecretValue>,
+    model_provider: Option<String>,
+    model_name: Option<String>,
+    max_upload_bytes: Option<u64>,
+    request_timeout_seconds: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for TenderConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let repr = TenderConfigRepr::deserialize(deserializer)?;
+        if !repr.enabled {
+            return Ok(Self::default());
+        }
+        let directory = repr
+            .document_dir
+            .ok_or_else(|| D::Error::missing_field("document_dir"))?;
+        if !directory.is_absolute()
+            || directory
+                .components()
+                .any(|part| matches!(part, Component::ParentDir))
+        {
+            return Err(D::Error::custom(
+                "tender document_dir must be an absolute path without parent traversal",
+            ));
+        }
+        let raw_url = repr
+            .analysis_base_url
+            .ok_or_else(|| D::Error::missing_field("analysis_base_url"))?;
+        let url = reqwest::Url::parse(&raw_url)
+            .map_err(|_| D::Error::custom("invalid tender analysis_base_url"))?;
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.path() != "/"
+        {
+            return Err(D::Error::custom(
+                "tender analysis_base_url must be an origin without credentials",
+            ));
+        }
+        let loopback = url.host_str().is_some_and(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+        });
+        if url.scheme() != "https" && !(repr.allow_local_http && url.scheme() == "http" && loopback) {
+            return Err(D::Error::custom(
+                "tender analysis_base_url requires HTTPS or explicitly allowed loopback HTTP",
+            ));
+        }
+        let token = repr
+            .internal_service_token
+            .ok_or_else(|| D::Error::missing_field("internal_service_token"))?;
+        if token.expose_secret().len() < 32 {
+            return Err(D::Error::custom(
+                "tender internal_service_token must be at least 32 bytes",
+            ));
+        }
+        let model_provider = repr
+            .model_provider
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| D::Error::missing_field("model_provider"))?;
+        let model_name = repr
+            .model_name
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| D::Error::missing_field("model_name"))?;
+        let max_upload_bytes = repr.max_upload_bytes.unwrap_or(50 * 1024 * 1024);
+        let request_timeout_seconds = repr.request_timeout_seconds.unwrap_or(300);
+        if max_upload_bytes == 0
+            || max_upload_bytes > 50 * 1024 * 1024
+            || request_timeout_seconds == 0
+            || request_timeout_seconds > 300
+        {
+            return Err(D::Error::custom("invalid tender upload or timeout limit"));
+        }
+        Ok(Self {
+            enabled: true,
+            settings: Some(TenderEnabledConfig {
+                document_dir: directory,
+                analysis_base_url: url,
+                internal_service_token: token,
+                model_provider,
+                model_name,
+                max_upload_bytes,
+                request_timeout_seconds,
+            }),
+        })
+    }
 }
 
 /// Talent import settings.
@@ -412,9 +538,55 @@ impl Serialize for SecretValue {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Config, SecretValue, TalentConfig, TalentEncryptionConfig};
+    use super::{Config, SecretValue, TalentConfig, TalentEncryptionConfig, TenderConfig};
 
     const TEST_SECRET: &str = "fictional-config-secret";
+
+    #[test]
+    fn tender_config_is_disabled_by_default_and_requires_complete_safe_settings() {
+        let disabled: TenderConfig = serde_json::from_value(serde_json::json!({"enabled": false})).unwrap();
+        assert!(!disabled.enabled);
+        assert!(disabled.settings.is_none());
+        assert!(serde_json::from_value::<TenderConfig>(serde_json::json!({"enabled": true})).is_err());
+        let directory = if cfg!(windows) {
+            "C:\\private\\tenders"
+        } else {
+            "/private/tenders"
+        };
+        let input = |url: &str, allow_local_http: bool| {
+            serde_json::json!({
+                "enabled": true,
+                "document_dir": directory,
+                "analysis_base_url": url,
+                "allow_local_http": allow_local_http,
+                "internal_service_token": "fictional-internal-token-1234567890",
+            "model_provider": "fixture-provider",
+            "model_name": "fixture-model",
+            })
+        };
+        for url in [
+            "http://example.invalid/",
+            "https://user:pass@example.invalid/",
+            "https://example.invalid/private/",
+            "https://example.invalid/?token=secret",
+        ] {
+            assert!(serde_json::from_value::<TenderConfig>(input(url, false)).is_err());
+        }
+        assert!(serde_json::from_value::<TenderConfig>(input("http://127.0.0.1:8123/", false)).is_err());
+        assert!(serde_json::from_value::<TenderConfig>(input("http://example.invalid/", true)).is_err());
+        let enabled: TenderConfig = serde_json::from_value(input("http://127.0.0.1:8123/", true)).unwrap();
+        assert_eq!(
+            enabled.settings.as_ref().unwrap().max_upload_bytes,
+            50 * 1024 * 1024
+        );
+        let debug = format!("{enabled:?}");
+        assert!(!debug.contains("fictional-internal-token"));
+        assert!(
+            !serde_json::to_string(&enabled)
+                .unwrap()
+                .contains("fictional-internal-token")
+        );
+    }
 
     #[test]
     fn talent_config_defaults_to_disabled_without_secrets() {

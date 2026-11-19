@@ -212,6 +212,7 @@ pub(crate) struct TenderJobView {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub report_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +222,9 @@ pub(crate) struct TenderProjectRow {
     pub source_url: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub latest_job_id: Option<Uuid>,
+    pub latest_job_status: Option<TenderJobStatus>,
+    pub latest_report_id: Option<Uuid>,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -289,12 +293,14 @@ impl ClaimedTenderJobWire {
 pub(crate) trait DBTender {
     async fn create_tender_project(&self, input: NewTenderProject) -> Result<Uuid>;
     async fn create_tender_document_job(&self, input: NewTenderDocumentJob) -> Result<CreateJobOutcome>;
+    async fn retry_tender_analysis_job(&self, user_id: Uuid, failed_job_id: Uuid) -> Result<Option<Uuid>>;
     async fn claim_tender_analysis_job(&self) -> Result<Option<ClaimedTenderJob>>;
     async fn transition_tender_analysis_job(&self, input: TenderJobTransition) -> Result<()>;
     async fn complete_tender_analysis_job(&self, input: CompletedTenderJob) -> Result<Uuid>;
     async fn fail_tender_analysis_job(&self, input: FailedTenderJob) -> Result<()>;
     async fn get_tender_analysis_job(&self, user_id: Uuid, job_id: Uuid) -> Result<Option<TenderJobView>>;
     async fn list_tender_projects(&self, user_id: Uuid) -> Result<Vec<TenderProjectRow>>;
+    async fn list_tender_jobs(&self, user_id: Uuid) -> Result<Vec<TenderJobView>>;
     async fn get_tender_report(&self, user_id: Uuid, report_id: Uuid) -> Result<Option<TenderReportRow>>;
 }
 
@@ -323,6 +329,19 @@ impl DBTender for PgDB {
             )
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
+    }
+
+    #[instrument(skip(self), err)]
+    async fn retry_tender_analysis_job(&self, user_id: Uuid, failed_job_id: Uuid) -> Result<Option<Uuid>> {
+        trace!("db: retry tender analysis job");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one(
+                "select retry_tender_analysis_job($1, $2);",
+                &[&user_id, &failed_job_id],
+            )
+            .await?;
+        Ok(row.get(0))
     }
 
     #[instrument(skip(self), err)]
@@ -396,6 +415,16 @@ impl DBTender for PgDB {
         let db = self.pool.get().await?;
         let row = db
             .query_one("select list_tender_projects($1::uuid)::text;", &[&user_id])
+            .await?;
+        Ok(serde_json::from_str(&row.get::<_, String>(0))?)
+    }
+
+    #[instrument(skip(self), err)]
+    async fn list_tender_jobs(&self, user_id: Uuid) -> Result<Vec<TenderJobView>> {
+        trace!("db: list tender jobs");
+        let db = self.pool.get().await?;
+        let row = db
+            .query_one("select list_tender_jobs($1::uuid)::text;", &[&user_id])
             .await?;
         Ok(serde_json::from_str(&row.get::<_, String>(0))?)
     }
