@@ -623,7 +623,7 @@ mod tests {
             *self.bytes.lock().unwrap() = bytes.clone();
             Ok(StoredTenderDocument {
                 storage_key: Uuid::new_v4().to_string(),
-                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                sha256: crate::tender::hex_bytes(&Sha256::digest(&bytes)),
                 size_bytes: bytes.len() as u64,
             })
         }

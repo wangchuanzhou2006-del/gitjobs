@@ -138,7 +138,7 @@ pub(crate) async fn setup(
         .route(
             "/tenders/{project_id}/documents",
             post(platform::tenders::upload)
-                .layer(DefaultBodyLimit::disable())
+                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::disable())
                 .layer(RequestBodyLimitLayer::new(platform::tenders::MAX_REQUEST_BYTES)),
         )
         .route("/tenders/jobs/{job_id}/status", get(platform::tenders::status))

@@ -1,87 +1,210 @@
 {% extends "base.html" %}
-{% block document_language %}zh-CN{% endblock document_language %}
-{% block page_title %}招标分析报告 · GitJobs{% endblock page_title %}
-{% block page_description %}逐项核对招标文件事实、资格、风险和原文依据。{% endblock page_description %}
+{% block document_language %}
+  zh-CN
+{% endblock document_language %}
+{% block page_title %}
+  招标分析报告 · GitJobs
+{% endblock page_title %}
+{% block page_description %}
+  逐项核对招标文件事实、资格、风险和原文依据。
+{% endblock page_description %}
 {% block content %}
-<div class="min-h-dvh bg-[#edf2f4] text-[#10283d]">
-  <header class="border-b border-[#cdd9dd] bg-[#10283d] text-white">
-    <nav class="mx-auto flex max-w-6xl flex-wrap items-center gap-5 px-4 py-4" aria-label="主导航">
-      <a class="font-semibold" href="/opportunities">餐饮情报</a>
-      <a class="text-[#c8d8e0] hover:text-white" href="/opportunities">机会</a>
-      <a class="text-[#c8d8e0] hover:text-white" href="/talent">人才</a>
-      <a aria-current="page" class="border-b-2 border-[#e5b866] pb-1 font-semibold" href="/tenders">招标文件</a>
-    </nav>
-  </header>
-  <main id="main-content" class="mx-auto max-w-5xl px-4 py-8 sm:py-12">
-    <a class="text-sm font-semibold underline underline-offset-2" href="/tenders">← 返回项目列表</a>
-    <p class="mt-8 font-mono text-xs uppercase tracking-[.25em] text-[#537184]">Evidence-backed analysis / 逐页可核</p>
-    <h1 class="mt-2 text-3xl font-semibold leading-tight break-words sm:text-4xl" style="font-family: 'Noto Serif SC', 'Songti SC', serif">{{ project_title }}</h1>
-    <div class="mt-5 flex flex-wrap gap-2 text-sm">
-      <span class="rounded-full bg-[#dce8e6] px-3 py-1 font-semibold">{{ report_status }}</span>
-      <span class="rounded-full border border-[#c6d5da] px-3 py-1">模型：{{ model_provider }} / {{ model_name }}</span>
-    </div>
-    <p class="mt-3 text-sm text-[#526b78]">以下内容由 AI 整理；请在投标决策前核对原文件与待人工确认项。</p>
+  <div class="min-h-dvh bg-[#edf2f4] text-[#10283d]">
+    <header class="border-b border-[#cdd9dd] bg-[#10283d] text-white">
+      <nav class="mx-auto flex max-w-6xl flex-wrap items-center gap-5 px-4 py-4"
+           aria-label="主导航">
+        <a class="font-semibold" href="/opportunities">餐饮情报</a>
+        <a class="text-[#c8d8e0] hover:text-white" href="/opportunities">机会</a>
+        <a class="text-[#c8d8e0] hover:text-white" href="/talent">人才</a>
+        <a aria-current="page"
+           class="border-b-2 border-[#e5b866] pb-1 font-semibold"
+           href="/tenders">招标文件</a>
+      </nav>
+    </header>
+    <main id="main-content" class="mx-auto max-w-5xl px-4 py-8 sm:py-12">
+      <a class="text-sm font-semibold underline underline-offset-2"
+         href="/tenders">← 返回项目列表</a>
+      <p class="mt-8 font-mono text-xs uppercase tracking-[.25em] text-[#537184]">
+        Evidence-backed analysis / 逐页可核
+      </p>
+      <h1 class="mt-2 text-3xl font-semibold leading-tight break-words sm:text-4xl"
+          style="font-family: 'Noto Serif SC', 'Songti SC', serif">{{ project_title }}</h1>
+      <div class="mt-5 flex flex-wrap gap-2 text-sm">
+        <span class="rounded-full bg-[#dce8e6] px-3 py-1 font-semibold">{{ report_status }}</span>
+        <span class="rounded-full border border-[#c6d5da] px-3 py-1">模型：{{ model_provider }} / {{ model_name }}</span>
+      </div>
+      <p class="mt-3 text-sm text-[#526b78]">以下内容由 AI 整理；请在投标决策前核对原文件与待人工确认项。</p>
 
-    <section class="mt-8 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7" aria-labelledby="overview-heading">
-      <p class="font-mono text-xs text-[#617b89]">01 / FACTS</p><h2 id="overview-heading" class="mt-1 text-2xl font-semibold">项目概况</h2>
-      <dl class="mt-5 grid gap-4 sm:grid-cols-2">
-        {% for fact in facts %}
-        <div class="min-w-0 border-l-4 {% if fact.confirmed %}border-[#e5b866]{% else %}border-[#b8cbd1]{% endif %} bg-[#f7faf9] p-4">
-          <dt class="text-sm text-[#526b78]">{{ fact.label }}</dt><dd class="mt-1 font-semibold break-words">{{ fact.value }}</dd>
-          {% for citation in fact.citations %}<details class="mt-3 text-sm"><summary class="cursor-pointer text-[#175373] underline underline-offset-2 focus-visible:outline-2">查看第 {{ citation.page_number }} 页原文</summary><blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3 text-[#40596a]">{{ citation.quote }}</blockquote></details>{% endfor %}
-        </div>
-        {% endfor %}
-      </dl>
-    </section>
+      <section class="mt-8 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7"
+               aria-labelledby="overview-heading">
+        <p class="font-mono text-xs text-[#617b89]">01 / FACTS</p>
+        <h2 id="overview-heading" class="mt-1 text-2xl font-semibold">项目概况</h2>
+        <dl class="mt-5 grid gap-4 sm:grid-cols-2">
+          {% for fact in facts %}
+            <div class="min-w-0 border-l-4 {% if fact.confirmed %}border-[#e5b866]{% else %}border-[#b8cbd1]{% endif %} bg-[#f7faf9] p-4">
+              <dt class="text-sm text-[#526b78]">{{ fact.label }}</dt>
+              <dd class="mt-1 font-semibold break-words">
+                {{ fact.value }}
+              </dd>
+              {% for citation in fact.citations %}
+                <details class="mt-3 text-sm">
+                  <summary class="cursor-pointer text-[#175373] underline underline-offset-2 focus-visible:outline-2">
+                    查看第 {{ citation.page_number }} 页原文
+                  </summary>
+                  <blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3 text-[#40596a]">
+                    {{ citation.quote }}
+                  </blockquote>
+                </details>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </dl>
+      </section>
 
-    <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7" aria-labelledby="qualification-heading">
-      <p class="font-mono text-xs text-[#617b89]">02 / ELIGIBILITY</p><h2 id="qualification-heading" class="mt-1 text-2xl font-semibold">资格要求</h2>
-      {% if qualifications.is_empty() %}<p class="mt-4 text-[#526b78]">未提取到可确认的资格条款，请查看待人工确认项。</p>{% endif %}
-      <ol class="mt-4 divide-y divide-[#e5ecee]">
-        {% for item in qualifications %}
-        <li class="py-4"><span class="text-xs font-semibold text-[#735b2e]">{{ item.kind }}</span><h3 class="mt-1 font-semibold break-words">{{ item.requirement }}</h3><p class="mt-2 text-sm text-[#526b78] break-words">文件表述：{{ item.original_text }}</p>
-          {% for citation in item.citations %}<details class="mt-2 text-sm"><summary class="cursor-pointer text-[#175373] underline underline-offset-2">查看第 {{ citation.page_number }} 页原文</summary><blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">{{ citation.quote }}</blockquote></details>{% endfor %}
-        </li>
-        {% endfor %}
-      </ol>
-    </section>
+      <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7"
+               aria-labelledby="qualification-heading">
+        <p class="font-mono text-xs text-[#617b89]">02 / ELIGIBILITY</p>
+        <h2 id="qualification-heading" class="mt-1 text-2xl font-semibold">资格要求</h2>
+        {% if qualifications.is_empty() %}<p class="mt-4 text-[#526b78]">未提取到可确认的资格条款，请查看待人工确认项。</p>{% endif %}
+        <ol class="mt-4 divide-y divide-[#e5ecee]">
+          {% for item in qualifications %}
+            <li class="py-4">
+              <span class="text-xs font-semibold text-[#735b2e]">{{ item.kind }}</span>
+              <h3 class="mt-1 font-semibold break-words">{{ item.requirement }}</h3>
+              <p class="mt-2 text-sm text-[#526b78] break-words">文件表述：{{ item.original_text }}</p>
+              {% for citation in item.citations %}
+                <details class="mt-2 text-sm">
+                  <summary class="cursor-pointer text-[#175373] underline underline-offset-2">
+                    查看第 {{ citation.page_number }} 页原文
+                  </summary>
+                  <blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">
+                    {{ citation.quote }}
+                  </blockquote>
+                </details>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ol>
+      </section>
 
-    <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7" aria-labelledby="risk-heading">
-      <p class="font-mono text-xs text-[#617b89]">03 / RISK</p><h2 id="risk-heading" class="mt-1 text-2xl font-semibold">风险提示</h2>
-      {% if risks.is_empty() %}<p class="mt-4 text-[#526b78]">没有带原文依据的风险结论。</p>{% endif %}
-      <ul class="mt-4 divide-y divide-[#e5ecee]">
-        {% for item in risks %}
-        <li class="py-4"><span class="text-xs font-semibold text-[#9b553d]">{{ item.severity }}</span><p class="mt-1 font-semibold break-words">{{ item.fact }}</p><dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3"><div><dt class="text-[#526b78]">判断</dt><dd class="break-words">{{ item.judgment }}</dd></div><div><dt class="text-[#526b78]">影响</dt><dd class="break-words">{{ item.impact }}</dd></div><div><dt class="text-[#526b78]">建议</dt><dd class="break-words">{{ item.suggestion }}</dd></div></dl>
-          {% for citation in item.citations %}<details class="mt-2 text-sm"><summary class="cursor-pointer text-[#175373] underline underline-offset-2">查看第 {{ citation.page_number }} 页原文</summary><blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">{{ citation.quote }}</blockquote></details>{% endfor %}
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
+      <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7"
+               aria-labelledby="risk-heading">
+        <p class="font-mono text-xs text-[#617b89]">03 / RISK</p>
+        <h2 id="risk-heading" class="mt-1 text-2xl font-semibold">风险提示</h2>
+        {% if risks.is_empty() %}<p class="mt-4 text-[#526b78]">没有带原文依据的风险结论。</p>{% endif %}
+        <ul class="mt-4 divide-y divide-[#e5ecee]">
+          {% for item in risks %}
+            <li class="py-4">
+              <span class="text-xs font-semibold text-[#9b553d]">{{ item.severity }}</span>
+              <p class="mt-1 font-semibold break-words">{{ item.fact }}</p>
+              <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+                <div>
+                  <dt class="text-[#526b78]">判断</dt>
+                  <dd class="break-words">
+                    {{ item.judgment }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-[#526b78]">影响</dt>
+                  <dd class="break-words">
+                    {{ item.impact }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-[#526b78]">建议</dt>
+                  <dd class="break-words">
+                    {{ item.suggestion }}
+                  </dd>
+                </div>
+              </dl>
+              {% for citation in item.citations %}
+                <details class="mt-2 text-sm">
+                  <summary class="cursor-pointer text-[#175373] underline underline-offset-2">
+                    查看第 {{ citation.page_number }} 页原文
+                  </summary>
+                  <blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">
+                    {{ citation.quote }}
+                  </blockquote>
+                </details>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
 
-    <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7" aria-labelledby="material-heading">
-      <p class="font-mono text-xs text-[#617b89]">04 / CHECKLIST</p><h2 id="material-heading" class="mt-1 text-2xl font-semibold">材料清单</h2>
-      {% if materials.is_empty() %}<p class="mt-4 text-[#526b78]">未提取到可确认的提交材料。</p>{% endif %}
-      <ul class="mt-4 divide-y divide-[#e5ecee]">
-        {% for item in materials %}<li class="py-4"><h3 class="font-semibold break-words">{{ item.name }}</h3><p class="mt-1 text-sm break-words">{{ item.description }}</p><p class="mt-1 text-xs text-[#526b78]">对应要求：{{ item.source_requirement }}</p>{% for citation in item.citations %}<details class="mt-2 text-sm"><summary class="cursor-pointer text-[#175373] underline underline-offset-2">查看第 {{ citation.page_number }} 页原文</summary><blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">{{ citation.quote }}</blockquote></details>{% endfor %}</li>{% endfor %}
-      </ul>
-    </section>
+      <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7"
+               aria-labelledby="material-heading">
+        <p class="font-mono text-xs text-[#617b89]">04 / CHECKLIST</p>
+        <h2 id="material-heading" class="mt-1 text-2xl font-semibold">材料清单</h2>
+        {% if materials.is_empty() %}<p class="mt-4 text-[#526b78]">未提取到可确认的提交材料。</p>{% endif %}
+        <ul class="mt-4 divide-y divide-[#e5ecee]">
+          {% for item in materials %}
+            <li class="py-4">
+              <h3 class="font-semibold break-words">{{ item.name }}</h3>
+              <p class="mt-1 text-sm break-words">{{ item.description }}</p>
+              <p class="mt-1 text-xs text-[#526b78]">对应要求：{{ item.source_requirement }}</p>
+              {% for citation in item.citations %}
+                <details class="mt-2 text-sm">
+                  <summary class="cursor-pointer text-[#175373] underline underline-offset-2">
+                    查看第 {{ citation.page_number }} 页原文
+                  </summary>
+                  <blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">
+                    {{ citation.quote }}
+                  </blockquote>
+                </details>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
 
-    <section class="mt-6 rounded-xl border border-[#e2c7a7] bg-[#fffaf1] p-5 sm:p-7" aria-labelledby="unknown-heading">
-      <p class="font-mono text-xs text-[#8a6748]">05 / HUMAN REVIEW</p><h2 id="unknown-heading" class="mt-1 text-2xl font-semibold">待人工确认</h2>
-      {% if unknowns.is_empty() %}<p class="mt-4 text-[#526b78]">没有单独列出的待确认事项；仍请核对原文件。</p>{% endif %}
-      <ul class="mt-4 divide-y divide-[#eadac5]">
-        {% for item in unknowns %}<li class="py-4"><h3 class="font-semibold break-words">{{ item.field_name }} <span class="text-sm font-normal text-[#8a6748]">· {{ item.reason }}</span></h3><p class="mt-1 text-sm break-words">{{ item.detail }}</p>{% for citation in item.citations %}<details class="mt-2 text-sm"><summary class="cursor-pointer text-[#175373] underline underline-offset-2">查看第 {{ citation.page_number }} 页原文</summary><blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">{{ citation.quote }}</blockquote></details>{% endfor %}</li>{% endfor %}
-      </ul>
-    </section>
+      <section class="mt-6 rounded-xl border border-[#e2c7a7] bg-[#fffaf1] p-5 sm:p-7"
+               aria-labelledby="unknown-heading">
+        <p class="font-mono text-xs text-[#8a6748]">05 / HUMAN REVIEW</p>
+        <h2 id="unknown-heading" class="mt-1 text-2xl font-semibold">待人工确认</h2>
+        {% if unknowns.is_empty() %}<p class="mt-4 text-[#526b78]">没有单独列出的待确认事项；仍请核对原文件。</p>{% endif %}
+        <ul class="mt-4 divide-y divide-[#eadac5]">
+          {% for item in unknowns %}
+            <li class="py-4">
+              <h3 class="font-semibold break-words">
+                {{ item.field_name }} <span class="text-sm font-normal text-[#8a6748]">· {{ item.reason }}</span>
+              </h3>
+              <p class="mt-1 text-sm break-words">{{ item.detail }}</p>
+              {% for citation in item.citations %}
+                <details class="mt-2 text-sm">
+                  <summary class="cursor-pointer text-[#175373] underline underline-offset-2">
+                    查看第 {{ citation.page_number }} 页原文
+                  </summary>
+                  <blockquote class="mt-2 whitespace-pre-wrap break-words border-l-2 border-[#e5b866] pl-3">
+                    {{ citation.quote }}
+                  </blockquote>
+                </details>
+              {% endfor %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
 
-    <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7" aria-labelledby="source-heading">
-      <p class="font-mono text-xs text-[#617b89]">06 / TRACE</p><h2 id="source-heading" class="mt-1 text-2xl font-semibold">原文依据</h2>
-      <p class="mt-2 text-sm text-[#526b78]">引用保留招标文件页码与原文；同一片段在多个结论中只列一次。</p>
-      <ol class="mt-4 divide-y divide-[#e5ecee]">
-        {% for citation in sources %}<li class="py-3"><span class="font-mono text-xs font-semibold text-[#8a6748]">PAGE {{ citation.page_number }}</span><blockquote class="mt-1 whitespace-pre-wrap break-words text-sm">{{ citation.quote }}</blockquote></li>{% endfor %}
-      </ol>
-    </section>
-    <footer class="mt-6 pb-8 text-xs text-[#526b78]">契约：tender-analysis.v1 · 提示词版本：{% for version in prompt_versions %}{{ version }} {% endfor %}</footer>
-  </main>
-</div>
+      <section class="mt-6 rounded-xl border border-[#cbd8dd] bg-white p-5 sm:p-7"
+               aria-labelledby="source-heading">
+        <p class="font-mono text-xs text-[#617b89]">06 / TRACE</p>
+        <h2 id="source-heading" class="mt-1 text-2xl font-semibold">原文依据</h2>
+        <p class="mt-2 text-sm text-[#526b78]">引用保留招标文件页码与原文；同一片段在多个结论中只列一次。</p>
+        <ol class="mt-4 divide-y divide-[#e5ecee]">
+          {% for citation in sources %}
+            <li class="py-3">
+              <span class="font-mono text-xs font-semibold text-[#8a6748]">PAGE {{ citation.page_number }}</span>
+              <blockquote class="mt-1 whitespace-pre-wrap break-words text-sm">
+                {{ citation.quote }}
+              </blockquote>
+            </li>
+          {% endfor %}
+        </ol>
+      </section>
+      <footer class="mt-6 pb-8 text-xs text-[#526b78]">
+        契约：tender-analysis.v1 · 提示词版本：
+        {% for version in prompt_versions %}{{ version }}{% endfor %}
+      </footer>
+    </main>
+  </div>
 {% endblock content %}

@@ -62,7 +62,7 @@ impl TenderServices {
             "tender-analysis.v1\0{}\0{}\0tender-project-info-v1\0tender-qualifications-v1\0tender-risks-v1\0tender-materials-v1\0tender-review-v1",
             settings.model_provider, settings.model_name
         );
-        let analysis_config_hash = format!("{:x}", Sha256::digest(fingerprint.as_bytes()));
+        let analysis_config_hash = hex_bytes(&Sha256::digest(fingerprint.as_bytes()));
         Ok(Arc::new(Self {
             storage: Some(storage),
             processor: Some(processor),
@@ -70,5 +70,25 @@ impl TenderServices {
             model_provider: Some(settings.model_provider.clone()),
             model_name: Some(settings.model_name.clone()),
         }))
+    }
+}
+
+pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hex_bytes;
+
+    #[test]
+    fn hex_bytes_encodes_digest_without_sha2_formatting_traits() {
+        assert_eq!(hex_bytes(&[0x00, 0x0f, 0x10, 0xab, 0xff]), "000f10abff");
     }
 }

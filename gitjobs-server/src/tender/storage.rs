@@ -161,14 +161,14 @@ impl TenderDocumentStore for FileSystemTenderDocumentStore {
         cleanup.0 = None;
         Ok(StoredTenderDocument {
             storage_key: id,
-            sha256: format!("{digest:x}"),
+            sha256: super::hex_bytes(&digest.finalize()),
             size_bytes: size,
         })
     }
 
     async fn open(&self, storage_key: &str) -> Result<Vec<u8>, StorageError> {
         let path = self.existing_path(storage_key).await?;
-        let mut file = File::open(path).await.map_err(|_| StorageError::Unavailable)?;
+        let file = File::open(path).await.map_err(|_| StorageError::Unavailable)?;
         let mut bytes = Vec::new();
         file.take(self.max_bytes + 1)
             .read_to_end(&mut bytes)

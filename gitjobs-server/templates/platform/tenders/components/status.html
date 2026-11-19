@@ -1,11 +1,24 @@
-<section id="tender-job-status" aria-live="polite"
-  {% if in_progress %}hx-get="/tenders/jobs/{{ job_id }}/status?fragment=1" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}
-  class="rounded-xl border border-[#cbd8dd] bg-white p-5 shadow-sm sm:p-7">
+<section id="tender-job-status"
+         aria-live="polite"
+         {% if in_progress %}hx-get="/tenders/jobs/{{ job_id }}/status?fragment=1" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}
+         class="rounded-xl border border-[#cbd8dd] bg-white p-5 shadow-sm sm:p-7">
   <p class="font-mono text-xs text-[#617b89]">TASK / {{ job_id }}</p>
   <h2 class="mt-2 text-xl font-semibold break-words">{{ project_title }}</h2>
   <p class="mt-4 border-l-4 border-[#e5b866] pl-4 text-lg font-semibold">{{ status_label }}</p>
   {% if let Some(error_label) = error_label %}<p class="mt-3 text-[#7b3e35]">{{ error_label }}</p>{% endif %}
-  {% if let Some(report_id) = report_id %}<a class="mt-5 inline-block rounded-md bg-[#123b55] px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2" href="/tenders/reports/{{ report_id }}">查看分析报告</a>{% endif %}
-  {% if failed %}<form class="mt-5" action="/tenders/jobs/{{ job_id }}/retry" method="post"><button class="rounded-md bg-[#e5b866] px-4 py-2 font-semibold text-[#10283d] focus-visible:outline-2 focus-visible:outline-offset-2" type="submit">重新分析</button></form>{% endif %}
-  {% if in_progress %}<p class="mt-4 text-sm text-[#526b78]">此页面会自动更新。若已关闭自动更新，请<a class="underline" href="/tenders/jobs/{{ job_id }}/status">手动刷新</a>。</p>{% endif %}
+  {% if let Some(report_id) = report_id %}
+    <a class="mt-5 inline-block rounded-md bg-[#123b55] px-4 py-2 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2"
+       href="/tenders/reports/{{ report_id }}">查看分析报告</a>
+  {% endif %}
+  {% if failed %}
+    <form class="mt-5" action="/tenders/jobs/{{ job_id }}/retry" method="post">
+      <button class="rounded-md bg-[#e5b866] px-4 py-2 font-semibold text-[#10283d] focus-visible:outline-2 focus-visible:outline-offset-2"
+              type="submit">重新分析</button>
+    </form>
+  {% endif %}
+  {% if in_progress %}
+    <p class="mt-4 text-sm text-[#526b78]">
+      此页面会自动更新。若已关闭自动更新，请<a class="underline" href="/tenders/jobs/{{ job_id }}/status">手动刷新</a>。
+    </p>
+  {% endif %}
 </section>

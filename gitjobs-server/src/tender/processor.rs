@@ -91,7 +91,7 @@ impl TenderProcessor {
             Ok(pdf) => pdf,
             Err(error) => return self.handle_error(&claim, storage_error_code(&error), false).await,
         };
-        if format!("{:x}", Sha256::digest(&pdf)) != claim.sha256 {
+        if super::hex_bytes(&Sha256::digest(&pdf)) != claim.sha256 {
             return self.handle_error(&claim, "storage_unavailable", false).await;
         }
         let document = match self.parse_with_one_retry(&claim, &pdf).await {
@@ -363,7 +363,7 @@ mod tests {
             model_name: None,
             prompt_version: None,
             storage_key: Uuid::new_v4().to_string(),
-            sha256: format!("{:x}", Sha256::digest(PDF)),
+            sha256: crate::tender::hex_bytes(&Sha256::digest(PDF)),
         }
     }
 

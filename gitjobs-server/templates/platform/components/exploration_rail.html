@@ -14,9 +14,11 @@
        href="/talent"
        title="现有招聘与求职"
        {% if page_id == PageId::Talent %}aria-current="page"{% endif %}>人才</a>
-    {% if cfg.tender_enabled %}<a class="opportunity-focus"
-       href="/tenders"
-       {% if page_id == PageId::Tenders %}aria-current="page"{% endif %}>招标</a>{% endif %}
+    {% if cfg.tender_enabled %}
+      <a class="opportunity-focus"
+         href="/tenders"
+         {% if page_id == PageId::Tenders %}aria-current="page"{% endif %}>招标</a>
+    {% endif %}
     <span aria-disabled="true" title="后续阶段开放">情报</span>
     <span aria-disabled="true" title="后续阶段开放">企业</span>
   </nav>
@@ -35,9 +37,11 @@
   <a class="opportunity-focus"
      href="/talent"
      {% if page_id == PageId::Talent %}aria-current="page"{% endif %}>人才</a>
-  {% if cfg.tender_enabled %}<a class="opportunity-focus"
-     href="/tenders"
-     {% if page_id == PageId::Tenders %}aria-current="page"{% endif %}>招标</a>{% endif %}
+  {% if cfg.tender_enabled %}
+    <a class="opportunity-focus"
+       href="/tenders"
+       {% if page_id == PageId::Tenders %}aria-current="page"{% endif %}>招标</a>
+  {% endif %}
   <a class="opportunity-focus"
      href="{% if page_id == PageId::Talent %}#talent-command-input{% else %}#ai-command-input{% endif %}">AI</a>
   <span aria-disabled="true">消息</span>
