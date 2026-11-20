@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page, TestInfo } from "@playwright/test";
 
-import { navigateHomeWithRetries, navigateWithRetries } from "../../shared/helpers";
+import { navigateWithRetries } from "../../shared/helpers";
 import { loginWithCredentials } from "../../shared/utils";
 
 const TRUSTED_SOURCE = "E2E Trusted Talent Source";
@@ -183,7 +183,6 @@ const batchInput = (token: string, phoneBase: number) =>
 test.describe.serial("Moderator talent import and review acceptance", () => {
   test.beforeEach(async ({ page }) => {
     attachBrowserErrorCapture(page);
-    await navigateHomeWithRetries(page);
     await loginWithCredentials(page, "test", "test1234");
   });
 
