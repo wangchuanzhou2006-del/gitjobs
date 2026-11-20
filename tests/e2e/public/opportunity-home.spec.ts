@@ -108,15 +108,22 @@ test.describe("opportunity constellation foundation", () => {
     });
     expect(encoding).toEqual({ renderMode: "richText", periods: [1.8, 4.2], nodeCount: 6 });
     if (testInfo.project.name === "chromium") {
+      await expect
+        .poll(() =>
+          page.locator("#opportunity-graph canvas").evaluateAll((canvases) =>
+            canvases.some((canvas) => {
+              const drawing = canvas as HTMLCanvasElement;
+              const context = drawing.getContext("2d");
+              if (!context) return false;
+              const pixels = context.getImageData(0, 0, drawing.width, drawing.height).data;
+              return pixels.some((value, index) => index % 4 === 3 && value > 0);
+            }),
+          ),
+        )
+        .toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("preview-opportunities-top.png") });
       await page.locator("#opportunity-graph").screenshot({
-        path: testInfo.outputPath("preview-opportunity-graph-diagnostic.png"),
-      });
-      await page.screenshot({
-        path: testInfo.outputPath("preview-opportunities-viewport-diagnostic.png"),
-      });
-      await page.screenshot({
-        path: testInfo.outputPath("preview-opportunities-desktop.png"),
-        fullPage: true,
+        path: testInfo.outputPath("preview-opportunity-graph.png"),
       });
     }
   });

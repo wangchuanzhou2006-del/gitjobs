@@ -92,6 +92,12 @@ const attachBrowserErrorCapture = (page: Page) => {
     diagnostics.allMessages.push(entry);
     diagnostics.errors.push(entry);
   });
+  page.on("requestfailed", (request) => {
+    const path = new URL(request.url()).pathname;
+    diagnostics.allMessages.push(
+      `requestfailed: ${request.method()} ${path} ${request.failure()?.errorText ?? "unknown"}`,
+    );
+  });
 };
 
 const submitImport = async (page: Page, sourceName: string, rawText: string) => {
@@ -184,7 +190,10 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
   test.afterEach(async ({ page }, testInfo) => {
     const fixture = projectFixture(testInfo);
     const diagnostics = browserDiagnostics.get(page) ?? { allMessages: [], errors: [] };
-    expect(diagnostics.errors).toEqual([]);
+    expect(
+      diagnostics.errors,
+      diagnostics.allMessages.filter((message) => message.startsWith("requestfailed:")).join("\n"),
+    ).toEqual([]);
     const browserOutput = diagnostics.allMessages.join("\n");
     for (const name of PROTECTED_FIELD_NAMES) expect(browserOutput).not.toContain(name);
     for (const secret of projectProtectedValues(
