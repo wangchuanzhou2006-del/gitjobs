@@ -255,8 +255,10 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await expect.poll(async () => {
       const response = await page.request.get(`/dashboard/moderator/talent/review/${workflow.newItemId}`);
       const html = await response.text();
-      return html.match(/<span class="border border-stone-300[^"]*">([^<]*)<\/span>/)?.[1]?.trim();
-    }, { timeout: 30_000 }).toBe("待查看");
+      const status = html.match(/<span class="border border-stone-300[^"]*">([^<]*)<\/span>/)?.[1]?.trim();
+      const version = Number(html.match(/name="lock_version" value="(\d+)"/)?.[1]);
+      return status === "待查看" && version > before;
+    }, { timeout: 30_000 }).toBe(true);
     await openItem(page, workflow.newItemId);
     const after = Number(await page.locator('input[name="lock_version"]').first().inputValue());
     expect(after).toBeGreaterThan(before);
@@ -350,7 +352,10 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
     await expect(page.getByRole("button", { name: "暂停自动发布" })).toBeVisible();
 
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "暂停自动发布" }).click();
+    await Promise.all([
+      page.waitForEvent("load"),
+      page.getByRole("button", { name: "暂停自动发布" }).click(),
+    ]);
     const raw = `招聘 E2E_PAUSED_SAFE_${fixture.token}，合成联系电话：${syntheticPhone(fixture.phoneBase + 6)}`;
     const batchId = await submitImport(page, TRUSTED_SOURCE, raw);
     await waitForBatchTitles(page, batchId, [fixture.titles.pausedSafe]);
