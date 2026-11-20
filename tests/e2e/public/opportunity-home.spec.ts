@@ -84,8 +84,10 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.getByRole("button", { name: "撤销上一步条件修改" })).toBeEnabled();
   });
 
-  test("renders explainable constellation encodings on desktop", async ({ page }) => {
+  test("renders explainable constellation encodings on desktop", async ({ page }, testInfo) => {
     await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+    await expect(page.getByTestId("desktop-exploration-rail")).toHaveCSS("position", "fixed");
+    await expect(page.locator("body")).not.toContainText("{% if");
     await expect(page.getByText("颜色表示项目类型")).toBeVisible();
     await expect(page.getByText("光环表示可信度")).toBeVisible();
     await expect(page.getByText("脉冲表示截止紧迫度")).toBeVisible();
@@ -105,6 +107,12 @@ test.describe("opportunity constellation foundation", () => {
       };
     });
     expect(encoding).toEqual({ renderMode: "richText", periods: [1.8, 4.2], nodeCount: 6 });
+    if (testInfo.project.name === "chromium") {
+      await page.screenshot({
+        path: testInfo.outputPath("preview-opportunities-desktop.png"),
+        fullPage: true,
+      });
+    }
   });
 
 

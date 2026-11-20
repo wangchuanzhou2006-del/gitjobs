@@ -39,9 +39,19 @@ test.describe("招标文件分析闭环", () => {
     expect(browserErrors.get(page) ?? []).toEqual([]);
   });
 
-  test("登录用户上传两页 PDF 后看到正确页码的预算和截止时间", async ({ page, browser }) => {
+  test("登录用户上传两页 PDF 后看到正确页码的预算和截止时间", async ({ page, browser }, testInfo) => {
     await page.goto("/opportunities");
     await expect(page.getByTestId("desktop-exploration-rail").getByRole("link", { name: "招标" })).toHaveAttribute("href", "/tenders");
+    await page.goto("/tenders");
+    await expect(page.getByRole("heading", { name: "让每一条结论，回到文件原页。" })).toBeVisible();
+    await expect(page.locator("header").first()).toHaveCSS("background-color", "rgb(16, 40, 61)");
+    await expect(page.locator("body")).not.toContainText("{% if");
+    if (testInfo.project.name === "chromium") {
+      await page.screenshot({
+        path: testInfo.outputPath("preview-tender-list.png"),
+        fullPage: true,
+      });
+    }
     const pdf = syntheticTenderPdf();
     const firstStatusUrl = await upload(page, pdf);
     await expect(page.getByRole("link", { name: "查看分析报告" })).toBeVisible({ timeout: 30_000 });
@@ -57,6 +67,14 @@ test.describe("招标文件分析闭环", () => {
     await expect(overview.locator("blockquote").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "待人工确认" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
+    await expect(page.locator("header").first()).toHaveCSS("background-color", "rgb(16, 40, 61)");
+    await expect(page.locator("body")).not.toContainText("{% if");
+    if (testInfo.project.name === "chromium") {
+      await page.screenshot({
+        path: testInfo.outputPath("preview-tender-report.png"),
+        fullPage: true,
+      });
+    }
     const reportUrl = page.url();
     const anonymous = await browser.newContext();
     const anonymousPage = await anonymous.newPage();

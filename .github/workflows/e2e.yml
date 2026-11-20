@@ -162,3 +162,11 @@ jobs:
           GITJOBS_E2E_TALENT_AI_PORT: "18081"
           GITJOBS_E2E_TENDER_ACCEPTANCE: "1"
           GITJOBS_E2E_TENDER_PORT: "18082"
+
+      - name: Upload rendered preview screenshots
+        if: always() && matrix.browser == 'chromium'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-ui-preview
+          path: test-results/**/preview-*.png
+          if-no-files-found: error
