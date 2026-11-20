@@ -184,6 +184,7 @@ test.describe.serial("Moderator talent import and review acceptance", () => {
   test.beforeEach(async ({ page }) => {
     attachBrowserErrorCapture(page);
     await loginWithCredentials(page, "test", "test1234");
+    await expect(page.locator("#user-dropdown-button")).toBeVisible();
   });
 
   test.afterEach(async ({ page }, testInfo) => {
