@@ -108,6 +108,12 @@ test.describe("opportunity constellation foundation", () => {
     });
     expect(encoding).toEqual({ renderMode: "richText", periods: [1.8, 4.2], nodeCount: 6 });
     if (testInfo.project.name === "chromium") {
+      await page.locator("#opportunity-graph").screenshot({
+        path: testInfo.outputPath("preview-opportunity-graph-diagnostic.png"),
+      });
+      await page.screenshot({
+        path: testInfo.outputPath("preview-opportunities-viewport-diagnostic.png"),
+      });
       await page.screenshot({
         path: testInfo.outputPath("preview-opportunities-desktop.png"),
         fullPage: true,
