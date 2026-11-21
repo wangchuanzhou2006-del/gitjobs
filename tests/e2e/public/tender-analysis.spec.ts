@@ -6,12 +6,18 @@ import { syntheticTenderPdf } from "../shared/synthetic-tender-pdf.mjs";
 
 const PROJECT_ID = "00000000-0000-4000-8000-00000000a701";
 const browserErrors = new WeakMap<Page, string[]>();
+const failedRequests = new WeakMap<Page, string[]>();
 
 function captureBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
+  const failures: string[] = [];
   browserErrors.set(page, errors);
+  failedRequests.set(page, failures);
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", (error) => errors.push(error.message));
+  page.on("requestfailed", (request) => {
+    failures.push(`${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? "unknown"}`);
+  });
   return errors;
 }
 
@@ -33,10 +39,11 @@ test.describe("招标文件分析闭环", () => {
   test.beforeEach(async ({ page }) => {
     captureBrowserErrors(page);
     await loginWithCredentials(page, "test", "test1234");
+    await page.locator("#user-dropdown-button").waitFor({ state: "visible" });
   });
 
   test.afterEach(async ({ page }) => {
-    expect(browserErrors.get(page) ?? []).toEqual([]);
+    expect(browserErrors.get(page) ?? [], `Failed requests: ${failedRequests.get(page)?.join(", ") ?? "none"}`).toEqual([]);
   });
 
   test("登录用户上传两页 PDF 后看到正确页码的预算和截止时间", async ({ page, browser }, testInfo) => {
