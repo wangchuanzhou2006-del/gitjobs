@@ -87,10 +87,20 @@ test.describe("招标文件分析闭环", () => {
     expect(duplicateStatusUrl).toBe(firstStatusUrl);
   });
 
-  test("伪造引用不能保存为报告，失败任务可以重试", async ({ page }) => {
+  test("伪造引用降级为待确认，不能展示为已确认金额", async ({ page }) => {
     await upload(page, syntheticTenderPdf(true));
+    await expect(page.getByRole("link", { name: "查看分析报告" })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("link", { name: "查看分析报告" }).click();
+    const overview = page.getByRole("region", { name: "项目概况" });
+    await expect(overview.getByText("预算金额", { exact: true }).locator("..").getByText("待确认", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /budget_amount.*缺少依据/ })).toBeVisible();
+    await expect(page.getByText("Invented budget: CNY 9999999")).toHaveCount(0);
+  });
+
+  test("损坏的 PDF 显示失败并允许重试", async ({ page }) => {
+    await upload(page, Buffer.from("%PDF-fictional"));
     await expect(page.getByText("分析失败", { exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("分析结果未通过原文核验，可以重新分析。")).toBeVisible();
+    await expect(page.getByText("PDF 无法读取。请确认文件未损坏。")).toBeVisible();
     await expect(page.getByRole("link", { name: "查看分析报告" })).toHaveCount(0);
     await page.getByRole("button", { name: "重新分析" }).click();
     await expect(page).toHaveURL(/\/tenders\/jobs\/[0-9a-f-]+\/status/);

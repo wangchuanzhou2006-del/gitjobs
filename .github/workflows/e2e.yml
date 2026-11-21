@@ -68,6 +68,14 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Set up Python for the real tender service
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the tender analysis service
+        run: python -m pip install -e ./services/tender-analysis
+
       - name: Initialize npm and install dependencies
         run: |
           npm init -y
@@ -145,6 +153,19 @@ jobs:
               model_name: "fixture-model"
           EOF
 
+      - name: Start the real tender service with a deterministic model
+        uses: JarvusInnovations/background-action@v1
+        env:
+          INTERNAL_SERVICE_TOKEN: ${{ env.GITJOBS_E2E_TENDER_TOKEN }}
+          LLM_PROVIDER: e2e
+          LLM_MODEL: fixture-model
+        with:
+          run: python -m uvicorn e2e_fixture_server:app --app-dir services/tender-analysis --host 127.0.0.1 --port 18082 &
+          wait-on: http://127.0.0.1:18082/internal/health
+          tail: true
+          log-output: "stdout,stderr"
+          log-output-if: true
+
       - name: Start server and wait for it to be ready
         uses: JarvusInnovations/background-action@v1
         with:
@@ -161,7 +182,6 @@ jobs:
           GITJOBS_E2E_TALENT_ACCEPTANCE: "1"
           GITJOBS_E2E_TALENT_AI_PORT: "18081"
           GITJOBS_E2E_TENDER_ACCEPTANCE: "1"
-          GITJOBS_E2E_TENDER_PORT: "18082"
 
       - name: Upload rendered preview screenshots
         if: always() && matrix.browser == 'chromium'
