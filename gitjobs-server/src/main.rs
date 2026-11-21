@@ -1,5 +1,6 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::struct_field_names)]
+#![recursion_limit = "256"]
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -11,6 +12,7 @@ use img::db::DbImageStore;
 use notifications::{DynEmailSender, LettreEmailSender, PgNotificationsManager};
 use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use postgres_openssl::MakeTlsConnector;
+use reqwest::Client;
 use tokio::{net::TcpListener, signal};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -20,6 +22,8 @@ use tracing_subscriber::EnvFilter;
 use crate::{
     config::{Config, LogFormat},
     db::PgDB,
+    talent::TalentServices,
+    tender::TenderServices,
 };
 
 mod auth;
@@ -30,7 +34,9 @@ mod handlers;
 mod img;
 mod notifications;
 mod router;
+mod talent;
 mod templates;
+mod tender;
 mod validation;
 mod workers;
 
@@ -65,6 +71,7 @@ async fn main() -> Result<()> {
         LogFormat::Json => ts.json().init(),
         LogFormat::Pretty => ts.init(),
     }
+    workers::install_privacy_safe_panic_hook();
 
     // Setup task tracker and cancellation token for background workers.
     let task_tracker = TaskTracker::new();
@@ -104,8 +111,25 @@ async fn main() -> Result<()> {
         &cancellation_token,
     ));
 
+    // Build the talent services once so HTTP handlers and workers share the same state.
+    let http_client = Client::new();
+    let talent_services = TalentServices::from_config(db.clone(), &cfg.server.talent, http_client.clone())
+        .context("error setting up talent services")?;
+    let tender_services = TenderServices::from_config(db.clone(), &cfg.server.tender)
+        .await
+        .context("error setting up tender services")?;
+
     // Run additional background workers.
-    workers::run(db.clone(), &task_tracker, cancellation_token.clone());
+    workers::run(
+        db.clone(),
+        talent_services.clone(),
+        cfg.server.talent.enabled,
+        cfg.server.talent.source_updates_enabled,
+        cfg.server.talent.allowed_public_hosts.clone(),
+        &task_tracker,
+        cancellation_token.clone(),
+    );
+    workers::run_tender(&tender_services, &task_tracker, cancellation_token.clone());
 
     // Setup and launch the HTTP server.
     let router = router::setup(
@@ -114,6 +138,9 @@ async fn main() -> Result<()> {
         image_store,
         notifications_manager,
         event_tracker,
+        talent_services,
+        tender_services,
+        http_client,
     )
     .await?;
     let listener = TcpListener::bind(&cfg.server.addr).await?;

@@ -13,3 +13,10 @@ test-results
 config/local/
 playwright-report/
 blob-report/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/

@@ -284,7 +284,7 @@ fn is_svg(bytes: &[u8], extension: &str) -> bool {
 }
 
 /// Checks whether the referer header matches the configured site hostname.
-fn referer_matches_site(server_cfg: &HttpServerConfig, headers: &HeaderMap) -> Result<bool> {
+pub(crate) fn referer_matches_site(server_cfg: &HttpServerConfig, headers: &HeaderMap) -> Result<bool> {
     if server_cfg.disable_referer_checks {
         return Ok(true);
     }

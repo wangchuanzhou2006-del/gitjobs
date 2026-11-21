@@ -2,3 +2,4 @@
 
 pub(crate) mod home;
 pub(crate) mod jobs;
+pub(crate) mod talent;

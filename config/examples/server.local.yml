@@ -23,3 +23,29 @@ server:
     linuxfoundation: false
   oauth2: {}
   oidc: {}
+  talent:
+    enabled: false
+    prototype_data: true
+    source_updates_enabled: false
+    allowed_public_hosts: []
+    # TASK 12 EXAMPLE ONLY: every placeholder below is deliberately invalid and
+    # nonworking. Production must set prototype_data=false and inject independently
+    # generated values through the environment or a secret manager:
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__ACTIVE_VERSION=<positive-integer>
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__KEYS__1=<INVALID-64-LOWERCASE-HEX-PLACEHOLDER>
+    # GITJOBS_SERVER__TALENT__ENCRYPTION__CONTACT_PEPPER=<INVALID-INDEPENDENT-SECRET>
+    # GITJOBS_SERVER__TALENT__AI__API_KEY=<INVALID-PROVIDER-CREDENTIAL>
+    # Disabled AI needs no key. Never put a working credential in this file.
+    ai:
+      base_url: https://api.example.invalid/v1
+      model: invalid-model-name
+  # Tender analysis remains off until private storage and the internal service are configured.
+  # GITJOBS_SERVER__TENDER__DOCUMENT_DIR=<ABSOLUTE-PRIVATE-DIRECTORY>
+  # GITJOBS_SERVER__TENDER__ANALYSIS_BASE_URL=https://internal-analysis.example.invalid/
+  # GITJOBS_SERVER__TENDER__INTERNAL_SERVICE_TOKEN=<GENERATE-A-RANDOM-32-BYTE-SECRET>
+  # GITJOBS_SERVER__TENDER__MODEL_PROVIDER=<SAME-AS-INTERNAL-SERVICE>
+  # GITJOBS_SERVER__TENDER__MODEL_NAME=<SAME-AS-INTERNAL-SERVICE>
+  tender:
+    enabled: false
+    max_upload_bytes: 52428800
+    request_timeout_seconds: 300

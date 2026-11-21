@@ -23,6 +23,7 @@ use crate::{
         dashboard::{
             employer::jobs::JobStatus,
             moderator::{
+                Menu,
                 home::{self, Content, Tab},
                 jobs,
             },
@@ -64,6 +65,12 @@ pub(crate) async fn page(
         }
     };
 
+    let moderator_menu = Menu {
+        live_jobs: content.is_live_jobs(),
+        pending_jobs: content.is_pending_jobs(),
+        ..Menu::default()
+    };
+
     // Prepare template
     let template = home::Page {
         auth_provider: session.get(AUTH_PROVIDER_KEY).await?,
@@ -72,6 +79,7 @@ pub(crate) async fn page(
         messages: messages.into_iter().collect(),
         page_id: PageId::ModeratorDashboard,
         user: auth_session.into(),
+        moderator_menu,
     };
 
     Ok(Html(template.render()?).into_response())

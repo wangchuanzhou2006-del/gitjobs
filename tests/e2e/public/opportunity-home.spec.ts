@@ -25,20 +25,30 @@ test.describe("opportunity constellation foundation", () => {
     await expect(
       page.getByTestId("desktop-exploration-rail").getByText("机会", { exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "从区域密度进入具体项目" })).toBeVisible();
+    await expect(page.getByText("怎么使用", { exact: true })).toBeVisible();
+    await expect(
+      page.getByTestId("desktop-exploration-rail").getByRole("link", { name: "人才" }),
+    ).toHaveAttribute("href", "/talent");
     await page.getByRole("button", { name: "切换深色沉浸模式" }).click();
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-theme", "dark");
     await page.reload();
     await expect(page.locator("#opportunity-app")).toHaveAttribute("data-theme", "dark");
   });
 
-  test("uses the five-item mobile navigation", async ({ page }) => {
+  test("keeps mobile navigation aligned with enabled destinations", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const nav = page.getByTestId("mobile-opportunity-nav");
     await expect(nav).toBeVisible();
-    await expect(nav.locator(":scope > *")).toHaveCount(5);
-    await expect(nav.getByRole("link")).toHaveCount(3);
+    const tenderEnabled = Boolean(process.env.GITJOBS_E2E_TENDER_ACCEPTANCE);
+    await expect(nav.locator(":scope > *")).toHaveCount(tenderEnabled ? 6 : 5);
+    await expect(nav.getByRole("link")).toHaveCount(tenderEnabled ? 4 : 3);
     await expect(nav.locator('[aria-disabled="true"]')).toHaveCount(2);
-    await expect(nav.locator(":scope > *")).toHaveText(["机会", "人才", "AI", "消息", "我的"]);
+    await expect(nav.locator(":scope > *")).toHaveText(
+      tenderEnabled ? ["机会", "人才", "招标", "AI", "消息", "我的"] : ["机会", "人才", "AI", "消息", "我的"],
+    );
+    const columns = await nav.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length);
+    expect(columns).toBe(tenderEnabled ? 6 : 5);
     await expect(page.getByTestId("desktop-exploration-rail")).toBeHidden();
   });
 
@@ -74,8 +84,10 @@ test.describe("opportunity constellation foundation", () => {
     await expect(page.getByRole("button", { name: "撤销上一步条件修改" })).toBeEnabled();
   });
 
-  test("renders explainable constellation encodings on desktop", async ({ page }) => {
+  test("renders explainable constellation encodings on desktop", async ({ page }, testInfo) => {
     await expect(page.locator("#opportunity-graph canvas")).toBeVisible();
+    await expect(page.getByTestId("desktop-exploration-rail")).toHaveCSS("position", "fixed");
+    await expect(page.locator("body")).not.toContainText("{% if");
     await expect(page.getByText("颜色表示项目类型")).toBeVisible();
     await expect(page.getByText("光环表示可信度")).toBeVisible();
     await expect(page.getByText("脉冲表示截止紧迫度")).toBeVisible();
@@ -95,6 +107,25 @@ test.describe("opportunity constellation foundation", () => {
       };
     });
     expect(encoding).toEqual({ renderMode: "richText", periods: [1.8, 4.2], nodeCount: 6 });
+    if (testInfo.project.name === "chromium") {
+      await expect
+        .poll(() =>
+          page.locator("#opportunity-graph canvas").evaluateAll((canvases) =>
+            canvases.some((canvas) => {
+              const drawing = canvas as HTMLCanvasElement;
+              const context = drawing.getContext("2d");
+              if (!context) return false;
+              const pixels = context.getImageData(0, 0, drawing.width, drawing.height).data;
+              return pixels.some((value, index) => index % 4 === 3 && value > 0);
+            }),
+          ),
+        )
+        .toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("preview-opportunities-top.png") });
+      await page.locator("#opportunity-graph").screenshot({
+        path: testInfo.outputPath("preview-opportunity-graph.png"),
+      });
+    }
   });
 
 
