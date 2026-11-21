@@ -161,7 +161,7 @@ jobs:
           LLM_MODEL: fixture-model
         with:
           run: python -m uvicorn e2e_fixture_server:app --app-dir services/tender-analysis --host 127.0.0.1 --port 18082 &
-          wait-on: http://127.0.0.1:18082/internal/health
+          wait-on: http-get://127.0.0.1:18082/internal/health
           tail: true
           log-output: "stdout,stderr"
           log-output-if: true

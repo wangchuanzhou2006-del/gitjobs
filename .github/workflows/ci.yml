@@ -24,8 +24,8 @@ jobs:
         run: python -m pytest -q
       - name: Check Python lint and formatting
         run: |
-          python -m ruff check app tests
-          python -m ruff format --check app tests
+          python -m ruff check app tests e2e_fixture_server.py
+          python -m ruff format --check app tests e2e_fixture_server.py
 
   lint-and-test-server:
     runs-on:
