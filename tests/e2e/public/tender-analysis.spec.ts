@@ -60,11 +60,19 @@ test.describe("招标文件分析闭环", () => {
     await expect(page.getByText("CNY 2800000", { exact: true })).toBeVisible();
     await expect(page.getByText("2026-09-01", { exact: true })).toBeVisible();
     const overview = page.getByRole("region", { name: "项目概况" });
-    await expect(overview.getByText("查看第 1 页原文").first()).toBeVisible();
-    await expect(overview.getByText("查看第 2 页原文")).toBeVisible();
-    await overview.locator("summary").first().focus();
+    const budgetFact = overview.getByText("预算金额", { exact: true }).locator("..");
+    const budgetCitation = budgetFact.locator("details");
+    await expect(budgetFact.getByText("CNY 2800000", { exact: true })).toBeVisible();
+    await expect(budgetCitation.locator("summary")).toHaveText("查看第 1 页原文");
+    await budgetCitation.locator("summary").focus();
     await page.keyboard.press("Enter");
-    await expect(overview.locator("blockquote").first()).toBeVisible();
+    await expect(budgetCitation.locator("blockquote")).toContainText("Budget amount: CNY 2800000");
+    const deadlineFact = overview.getByText("投标截止时间", { exact: true }).locator("..");
+    const deadlineCitation = deadlineFact.locator("details");
+    await expect(deadlineFact.getByText("2026-09-01", { exact: true })).toBeVisible();
+    await expect(deadlineCitation.locator("summary")).toHaveText("查看第 2 页原文");
+    await deadlineCitation.locator("summary").click();
+    await expect(deadlineCitation.locator("blockquote")).toContainText("Bid deadline: 2026-09-01");
     await expect(page.getByRole("heading", { name: "待人工确认" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "原文依据" })).toBeVisible();
     await expect(page.locator("header").first()).toHaveCSS("background-color", "rgb(16, 40, 61)");
@@ -98,12 +106,13 @@ test.describe("招标文件分析闭环", () => {
   });
 
   test("损坏的 PDF 显示失败并允许重试", async ({ page }) => {
-    await upload(page, Buffer.from("%PDF-fictional"));
+    const failedStatusUrl = await upload(page, Buffer.from("%PDF-fictional"));
     await expect(page.getByText("分析失败", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("PDF 无法读取。请确认文件未损坏。")).toBeVisible();
     await expect(page.getByRole("link", { name: "查看分析报告" })).toHaveCount(0);
     await page.getByRole("button", { name: "重新分析" }).click();
     await expect(page).toHaveURL(/\/tenders\/jobs\/[0-9a-f-]+\/status/);
+    expect(page.url()).not.toBe(failedStatusUrl);
     await expect(page.getByText("分析失败", { exact: true })).toBeVisible({ timeout: 30_000 });
   });
 

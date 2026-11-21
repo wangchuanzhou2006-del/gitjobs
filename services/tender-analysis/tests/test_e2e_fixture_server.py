@@ -12,6 +12,23 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture
+def fixture_app(monkeypatch):
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "e2e-only-fictional-tender-token-00000000")
+    monkeypatch.setenv("LLM_PROVIDER", "e2e")
+    monkeypatch.setenv("LLM_MODEL", "fixture-model")
+    from app import main
+
+    original_provider_factory = main._build_provider
+    from e2e_fixture_server import _build_fixture_provider, app
+
+    main._build_provider = _build_fixture_provider
+    try:
+        yield app
+    finally:
+        main._build_provider = original_provider_factory
+
+
 def _pdf(second_line: str = "Bid deadline: 2026-09-01") -> bytes:
     document = fitz.open()
     for line in ("Budget amount: CNY 2800000", second_line):
@@ -23,14 +40,11 @@ def _pdf(second_line: str = "Bid deadline: 2026-09-01") -> bytes:
 
 
 @pytest.mark.anyio
-async def test_real_parse_and_analyze_preserve_two_page_citations(monkeypatch):
-    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "e2e-only-fictional-tender-token-00000000")
-    monkeypatch.setenv("LLM_PROVIDER", "e2e")
-    monkeypatch.setenv("LLM_MODEL", "fixture-model")
-    from e2e_fixture_server import app
-
+async def test_real_parse_and_analyze_preserve_two_page_citations(fixture_app):
     headers = {"Authorization": "Bearer e2e-only-fictional-tender-token-00000000"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=fixture_app), base_url="http://test"
+    ) as client:
         parsed = await client.post(
             "/internal/v1/parse",
             headers=headers,
@@ -55,14 +69,11 @@ async def test_real_parse_and_analyze_preserve_two_page_citations(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_forged_model_quote_is_not_a_confirmed_fact(monkeypatch):
-    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "e2e-only-fictional-tender-token-00000000")
-    monkeypatch.setenv("LLM_PROVIDER", "e2e")
-    monkeypatch.setenv("LLM_MODEL", "fixture-model")
-    from e2e_fixture_server import app
-
+async def test_forged_model_quote_is_not_a_confirmed_fact(fixture_app):
     headers = {"Authorization": "Bearer e2e-only-fictional-tender-token-00000000"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=fixture_app), base_url="http://test"
+    ) as client:
         parsed = await client.post(
             "/internal/v1/parse",
             headers=headers,
