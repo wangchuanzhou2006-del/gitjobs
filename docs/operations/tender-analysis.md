@@ -12,7 +12,7 @@
 
 ## 容器
 
-从仓库根目录构建：`docker build -f services/tender-analysis/Dockerfile -t tender-analysis:local .`。容器以非 root 用户运行，只复制分析服务源码与依赖清单。部署时建议只读根文件系统及临时 `/tmp`，限制网络出口到批准的模型供应商，不挂主站 PDF 卷。`GET /internal/health` 只返回固定状态；解析与分析接口必须带内部 Bearer 密钥。当前 `pyproject.toml` 用最低版本约束而非完整锁文件；生产镜像应固定基础镜像 digest 与依赖解析结果后再发布。
+从仓库根目录构建：`docker build -f services/tender-analysis/Dockerfile -t tender-analysis:local .`。容器以非 root 用户运行，只复制分析服务源码与依赖清单。`uv.lock` 固定所有服务和测试依赖的版本及包哈希；容器、Python CI、浏览器验收共用此锁文件，并在安装时使用 `--locked` 拒绝过期锁。依赖升级应先在 `services/tender-analysis` 运行 `uv lock`，再用干净环境运行完整测试并审查锁文件差异。部署时建议只读根文件系统及临时 `/tmp`，限制网络出口到批准的模型供应商，不挂主站 PDF 卷。`GET /internal/health` 只返回固定状态；解析与分析接口必须带内部 Bearer 密钥。生产镜像仍应固定 Python 基础镜像 digest 后再发布。
 
 ## 用户可见状态与恢复
 

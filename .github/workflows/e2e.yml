@@ -73,8 +73,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install lockfile manager
+        run: python -m pip install uv==0.11.28
+
       - name: Install the tender analysis service
-        run: python -m pip install -e ./services/tender-analysis
+        run: uv sync --project services/tender-analysis --locked --no-dev
 
       - name: Initialize npm and install dependencies
         run: |
@@ -160,7 +163,7 @@ jobs:
           LLM_PROVIDER: e2e
           LLM_MODEL: fixture-model
         with:
-          run: python -m uvicorn e2e_fixture_server:app --app-dir services/tender-analysis --host 127.0.0.1 --port 18082 &
+          run: services/tender-analysis/.venv/bin/python -m uvicorn e2e_fixture_server:app --app-dir services/tender-analysis --host 127.0.0.1 --port 18082 &
           wait-on: http-get://127.0.0.1:18082/internal/health
           tail: true
           log-output: "stdout,stderr"
