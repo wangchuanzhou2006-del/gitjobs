@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from itertools import groupby
 
 from app.contracts import DocumentChunk, ParsedDocument
 
@@ -92,7 +93,7 @@ _NEGATION_TERMS = (
     "否则",
 )
 
-_TOC_MARKERS = ("目录", "目 录", "Table of Contents")
+_TOC_HEADING_RE = re.compile(r"(?im)^[ \t]*(?:目[ \t]*录|Table of Contents)(?=$|[ \t:：])")
 
 
 def _chunk_key(chunk: DocumentChunk) -> tuple[int, int]:
@@ -115,7 +116,7 @@ def _score(chunk: DocumentChunk, query_terms: Sequence[str]) -> int:
 
 
 def _looks_like_toc(text: str) -> bool:
-    return any(marker in text for marker in _TOC_MARKERS)
+    return _TOC_HEADING_RE.search(text) is not None
 
 
 def _high_in_priority_order(
@@ -169,7 +170,8 @@ def retrieve_chunks(
 
     Keep the strongest relevant chunk and one representative chunk from each
     introductory page and the table of contents before filling the remaining
-    quota by relevance, neighbors, and document context.
+    quota by relevance, neighbors, and document context. Tied relevant chunks
+    are spread across their priority tier when only part of it fits.
     """
     chunks = [c for page in document.pages for c in page.chunks]
     if not chunks:
@@ -215,8 +217,21 @@ def retrieve_chunks(
     if toc is not None:
         add(toc)
 
-    for chunk in high_ordered:
-        add(chunk)
+    for _, group in groupby(high_ordered, key=lambda c: scores[c.chunk_id]):
+        tier = [chunk for chunk in group if chunk.chunk_id not in seen]
+        slots = max_chunks - len(selected)
+        if slots <= 0:
+            break
+        if len(tier) <= slots:
+            for chunk in tier:
+                add(chunk)
+        elif slots == 1:
+            add(tier[0])
+            break
+        else:
+            for index in range(slots):
+                add(tier[index * (len(tier) - 1) // (slots - 1)])
+            break
     for chunk in neighbors:
         add(chunk)
     for chunk in intro:

@@ -115,3 +115,38 @@ def test_intro_and_toc_survive_full_relevance_quota():
 
     assert len(result) == 60
     assert {1, 2, 3, 64}.issubset(selected_pages)
+
+
+def test_tied_relevance_samples_later_pages_under_full_quota():
+    """Reserved context must not systematically discard the final tied pages."""
+    from app.retrieval import retrieve_chunks
+
+    pages = [["首页说明"], ["投标须知"], ["目录：附件位置"]]
+    pages.extend([["预算金额"]] * 60)
+
+    result = retrieve_chunks(_doc(pages), ["预算金额"])
+    selected_pages = {chunk.page_number for chunk in result}
+
+    assert len(result) == 60
+    assert {1, 2, 3, 63}.issubset(selected_pages)
+
+
+def test_real_toc_outlives_earlier_incidental_directory_word():
+    """A prose mention of 目录 must not replace a later actual contents heading."""
+    from app.retrieval import retrieve_chunks
+
+    pages = [
+        ["采购目录说明"],
+        ["投标须知"],
+        ["目录\n附录位置"],
+        ["普通附言"],
+        ["普通附言"],
+        ["普通附言"],
+    ]
+    pages.extend([["预算金额"]] * 60)
+
+    result = retrieve_chunks(_doc(pages), ["预算金额"])
+    selected_pages = {chunk.page_number for chunk in result}
+
+    assert len(result) == 60
+    assert {1, 2, 3}.issubset(selected_pages)
