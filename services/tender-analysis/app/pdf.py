@@ -103,7 +103,8 @@ def parse_pdf(data: bytes) -> ParsedDocument:
             total_bytes = 0
             pages: list[ParsedPage] = []
             for page_number in range(1, page_count + 1):
-                text = normalize_text(doc[page_number - 1].get_text("text"))
+                # Read in visual order: PDF generators often draw table columns separately.
+                text = normalize_text(doc[page_number - 1].get_text("text", sort=True))
                 total_bytes += len(text.encode("utf-8"))
                 if total_bytes > MAX_EXTRACTED_BYTES:
                     raise ParseError("extracted_text_too_large")

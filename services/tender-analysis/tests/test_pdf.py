@@ -104,6 +104,55 @@ def test_chinese_pdf_preserves_text():
     assert "第一页" in parsed.pages[0].text
 
 
+def test_column_major_table_and_later_attachments_keep_page_evidence():
+    """Column-major PDF drawing must still pair each table label with its value."""
+    from app.pdf import parse_pdf
+    from app.retrieval import QUERY_PACKS, retrieve_chunks
+
+    doc = fitz.open()
+    cover = doc.new_page()
+    cover.insert_text((50, 60), "招标文件目录", fontname="china-s")
+
+    table = doc.new_page()
+    table.insert_text((50, 50), "附件一 商务条款表", fontname="china-s")
+    # Many PDF generators draw one column at a time, not one row at a time.
+    for y, label in [(90, "预算金额"), (130, "投标截止时间"), (170, "采购人")]:
+        table.insert_text((50, y), label, fontname="china-s")
+    for y, value in [(90, "人民币100万元"), (130, "2027年03月01日"), (170, "测试单位")]:
+        table.insert_text((250, y), value, fontname="china-s")
+
+    qualifications = doc.new_page()
+    qualifications.insert_text((50, 60), "附件二 资格要求", fontname="china-s")
+    qualifications.insert_text((50, 100), "必须具备有效营业执照", fontname="china-s")
+    materials = doc.new_page()
+    materials.insert_text((50, 60), "附件三 提交材料", fontname="china-s")
+    materials.insert_text((50, 100), "提交承诺函原件", fontname="china-s")
+
+    parsed = parse_pdf(doc.tobytes())
+    assert [page.page_number for page in parsed.pages] == [1, 2, 3, 4]
+
+    table_lines = parsed.pages[1].text.splitlines()
+    for label, value in [
+        ("预算金额", "人民币100万元"),
+        ("投标截止时间", "2027年03月01日"),
+        ("采购人", "测试单位"),
+    ]:
+        assert value in next(line for line in table_lines if label in line)
+
+    for stage, page_number, quote in [
+        ("project_info", 2, "人民币100万元"),
+        ("qualifications", 3, "必须具备有效营业执照"),
+        ("materials", 4, "提交承诺函原件"),
+    ]:
+        selected = retrieve_chunks(parsed, QUERY_PACKS[stage])
+        assert any(
+            chunk.page_number == page_number
+            and chunk.chunk_id.startswith(f"page-{page_number}-chunk-")
+            and quote in chunk.text
+            for chunk in selected
+        )
+
+
 # ═══════════════════════════════════════════════════════════════
 # ── Text normalization ─────────────────────────────────────────
 # ═══════════════════════════════════════════════════════════════
