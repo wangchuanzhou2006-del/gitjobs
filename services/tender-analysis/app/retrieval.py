@@ -167,9 +167,9 @@ def retrieve_chunks(
 ) -> list[DocumentChunk]:
     """Return up to ``max_chunks`` chunks, always in document order.
 
-    High-scoring chunks are selected first (so later-page clauses are never
-    crowded out), then their neighbors, then a bounded, representative slice of
-    the first two pages and table-of-contents chunks fills any remaining quota.
+    Keep the strongest relevant chunk and one representative chunk from each
+    introductory page and the table of contents before filling the remaining
+    quota by relevance, neighbors, and document context.
     """
     chunks = [c for page in document.pages for c in page.chunks]
     if not chunks:
@@ -204,6 +204,16 @@ def retrieve_chunks(
             return
         selected.append(candidate)
         seen.add(candidate.chunk_id)
+
+    if high_ordered:
+        add(high_ordered[0])
+    for page_number in (1, 2):
+        representative = next((c for c in chunks if c.page_number == page_number), None)
+        if representative is not None:
+            add(representative)
+    toc = next((c for c in chunks if _looks_like_toc(c.text)), None)
+    if toc is not None:
+        add(toc)
 
     for chunk in high_ordered:
         add(chunk)

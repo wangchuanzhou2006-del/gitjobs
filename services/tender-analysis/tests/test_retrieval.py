@@ -100,3 +100,18 @@ def test_same_score_pages_not_crowded():
     result = retrieve_chunks(doc, ["预算金额"])
     assert len(result) <= 60
     assert any(c.page_number == 3 for c in result)
+
+
+def test_intro_and_toc_survive_full_relevance_quota():
+    """Relevant clauses must not consume every slot reserved for context."""
+    from app.retrieval import retrieve_chunks
+
+    pages = [["首页说明"], ["投标须知"], ["目录：附件位置"]]
+    pages.extend([["预算金额"]] * 60)
+    pages.append(["预算金额、投标截止时间：2027年03月01日"])
+
+    result = retrieve_chunks(_doc(pages), ["预算金额", "投标截止时间"])
+    selected_pages = {chunk.page_number for chunk in result}
+
+    assert len(result) == 60
+    assert {1, 2, 3, 64}.issubset(selected_pages)
