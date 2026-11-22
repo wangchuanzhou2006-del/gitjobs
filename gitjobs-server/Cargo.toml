@@ -25,6 +25,7 @@ garde = { workspace = true }
 human_format = { workspace = true }
 image = { workspace = true }
 lettre = { workspace = true }
+lopdf = { workspace = true }
 markdown = { workspace = true }
 mime_guess = { workspace = true }
 minify-html = { workspace = true }

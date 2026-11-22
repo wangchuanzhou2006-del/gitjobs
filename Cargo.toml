@@ -31,6 +31,7 @@ garde = { version = "0.23.0", features = ["derive", "url", "email"] }
 human_format = "1.2.1"
 image = "0.25.10"
 lettre = { version = "0.11.22", default-features = false, features = ["builder", "hostname", "pool", "smtp-transport", "tokio1-rustls-tls"] }
+lopdf = { version = "0.47.0", default-features = false }
 markdown = "1.0.0"
 mime_guess = "2.0.5"
 minify-html = "0.18.1"

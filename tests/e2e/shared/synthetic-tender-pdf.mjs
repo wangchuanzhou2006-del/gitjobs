@@ -2,10 +2,12 @@ const BUDGET = "Budget amount: CNY 2800000";
 const DEADLINE = "Bid deadline: 2026-09-01";
 
 // A genuine two-page PDF with uncompressed ASCII text for the acceptance mock.
-export function syntheticTenderPdf(forged = false) {
+export function syntheticTenderPdf(forged = false, blank = false) {
   const pageStream = (line) => `BT /F1 12 Tf 50 700 Td (${line}) Tj ET\n`;
-  const first = pageStream(BUDGET);
-  const second = pageStream(forged ? `${DEADLINE} E2E_FORGED_BID` : DEADLINE);
+  const first = pageStream(blank ? "" : BUDGET);
+  const second = pageStream(
+    blank ? "" : forged ? `${DEADLINE} E2E_FORGED_BID` : DEADLINE,
+  );
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
@@ -23,7 +25,8 @@ export function syntheticTenderPdf(forged = false) {
   }
   const xref = Buffer.byteLength(pdf);
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets.slice(1)) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  for (const offset of offsets.slice(1))
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(pdf, "ascii");
 }

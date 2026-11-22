@@ -149,6 +149,29 @@ impl TenderDocumentStore for FileSystemTenderDocumentStore {
         }
         file.sync_all().await.map_err(|_| StorageError::Unavailable)?;
         drop(file);
+        // Close the temporary file before CPU-bound parsing. The parser owns
+        // only bytes, so a cancelled request can still remove the temp file.
+        let validation_bytes = fs::read(&temporary_path)
+            .await
+            .map_err(|_| StorageError::Unavailable)?;
+        tokio::task::spawn_blocking(move || {
+            let document =
+                lopdf::Document::load_mem(&validation_bytes).map_err(|_| StorageError::InvalidPdf)?;
+            if document.catalog().is_err() {
+                return Err(StorageError::InvalidPdf);
+            }
+            let pages = document.get_pages();
+            if pages.is_empty()
+                || pages
+                    .values()
+                    .any(|page_id| document.get_dictionary(*page_id).is_err())
+            {
+                return Err(StorageError::InvalidPdf);
+            }
+            Ok::<(), StorageError>(())
+        })
+        .await
+        .map_err(|_| StorageError::InvalidPdf)??;
         if fs::try_exists(&final_path)
             .await
             .map_err(|_| StorageError::Unavailable)?
