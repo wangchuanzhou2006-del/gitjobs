@@ -73,6 +73,42 @@ def chunk_page(
     return chunks
 
 
+def _extract_page_text(page: fitz.Page) -> str:
+    """Keep source order outside ruled tables and serialize table cells by row."""
+    tables = page.find_tables().tables
+    if not tables:
+        return page.get_text("text")
+
+    table_rects = [fitz.Rect(table.bbox) for table in tables]
+    table_texts = [
+        "".join(
+            "\t".join((cell or "").replace("\n", " ").strip() for cell in row) + "\n"
+            for row in table.extract()
+            if any(cell and cell.strip() for cell in row)
+        )
+        for table in tables
+    ]
+    parts: list[str] = []
+    emitted: set[int] = set()
+    for block in page.get_text("blocks"):
+        if block[6] != 0:  # Text only; images do not provide citable source text.
+            continue
+        midpoint = fitz.Point((block[0] + block[2]) / 2, (block[1] + block[3]) / 2)
+        table_index = next(
+            (i for i, rect in enumerate(table_rects) if rect.contains(midpoint)), None
+        )
+        if table_index is None:
+            parts.append(block[4])
+        elif table_index not in emitted:
+            parts.append(table_texts[table_index])
+            emitted.add(table_index)
+
+    for index, table_text in enumerate(table_texts):
+        if index not in emitted:
+            parts.append(table_text)
+    return "".join(parts)
+
+
 def parse_pdf(data: bytes) -> ParsedDocument:
     """Parse PDF bytes into a page-preserving :class:`ParsedDocument`.
 
@@ -103,8 +139,7 @@ def parse_pdf(data: bytes) -> ParsedDocument:
             total_bytes = 0
             pages: list[ParsedPage] = []
             for page_number in range(1, page_count + 1):
-                # Read in visual order: PDF generators often draw table columns separately.
-                text = normalize_text(doc[page_number - 1].get_text("text", sort=True))
+                text = normalize_text(_extract_page_text(doc[page_number - 1]))
                 total_bytes += len(text.encode("utf-8"))
                 if total_bytes > MAX_EXTRACTED_BYTES:
                     raise ParseError("extracted_text_too_large")

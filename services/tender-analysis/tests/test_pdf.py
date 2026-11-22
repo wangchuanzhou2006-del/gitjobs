@@ -120,6 +120,10 @@ def test_column_major_table_and_later_attachments_keep_page_evidence():
         table.insert_text((50, y), label, fontname="china-s")
     for y, value in [(90, "人民币100万元"), (130, "2027年03月01日"), (170, "测试单位")]:
         table.insert_text((250, y), value, fontname="china-s")
+    for x in (40, 240, 440):
+        table.draw_line((x, 70), (x, 190))
+    for y in (70, 110, 150, 190):
+        table.draw_line((40, y), (440, y))
 
     qualifications = doc.new_page()
     qualifications.insert_text((50, 60), "附件二 资格要求", fontname="china-s")
@@ -151,6 +155,26 @@ def test_column_major_table_and_later_attachments_keep_page_evidence():
             and quote in chunk.text
             for chunk in selected
         )
+
+
+def test_unrelated_two_column_text_is_not_merged_into_false_rows():
+    """Independent page columns must not imply cross-column fact associations."""
+    from app.pdf import parse_pdf
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 80), "Project A")
+    page.insert_text((50, 120), "Buyer X")
+    page.insert_text((250, 80), "Budget 200")
+    page.insert_text((250, 120), "Project B")
+
+    parsed = parse_pdf(doc.tobytes())
+    assert parsed.pages[0].text.splitlines() == [
+        "Project A",
+        "Buyer X",
+        "Budget 200",
+        "Project B",
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════
