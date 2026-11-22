@@ -170,19 +170,24 @@ test.describe("招标文件分析闭环", () => {
     await expect(page.getByText("Invented budget: CNY 9999999")).toHaveCount(0);
   });
 
-  test("损坏的 PDF 在上传时拒绝，不创建任务", async ({ page }) => {
+  test("损坏的 PDF 在上传入口安全拒绝", async ({ page }) => {
     await page.goto("/tenders");
-    const form = page.locator(
-      `form[action="/tenders/${PROJECT_ID}/documents"]`,
+    const response = await page.request.post(
+      `/tenders/${PROJECT_ID}/documents`,
+      {
+        headers: { referer: page.url() },
+        multipart: {
+          file: {
+            name: "broken.pdf",
+            mimeType: "application/pdf",
+            buffer: Buffer.from("%PDF-fictional"),
+          },
+        },
+      },
     );
-    await form.locator('input[name="file"]').setInputFiles({
-      name: "broken.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from("%PDF-fictional"),
-    });
-    await form.getByRole("button", { name: "上传并分析" }).click();
-    await expect(page.getByText("文件不是有效的 PDF")).toBeVisible();
-    await expect(page).not.toHaveURL(/\/tenders\/jobs\/[0-9a-f-]+\/status/);
+    expect(response.status()).toBe(422);
+    expect(await response.text()).toBe("文件不是有效的 PDF");
+    expect(response.headers()["location"]).toBeUndefined();
   });
 
   test("有效但无文字的 PDF 提示需要文字识别并允许重试", async ({ page }) => {
