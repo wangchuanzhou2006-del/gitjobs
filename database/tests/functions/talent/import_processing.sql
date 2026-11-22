@@ -1,0 +1,938 @@
+begin;
+select plan(47);
+
+\set sourceCreator '00000000-0000-0000-0000-000000000511'
+
+insert into "user" (auth_hash, email, name, user_id, username)
+values (
+    decode('02', 'hex'),
+    'talent-import@example.com',
+    'Talent Import',
+    :'sourceCreator',
+    'talent_import_creator'
+);
+
+select results_eq(
+    $$
+    select table_name::text collate "C", data_type::text collate "C"
+    from information_schema.columns
+    where table_schema = current_schema()
+      and table_name in ('talent_import_batches', 'talent_import_items', 'talent_contacts')
+      and column_name = 'encryption_key_version'
+    order by table_name
+    $$,
+    $$
+    values
+        ('talent_contacts'::text collate "C", 'bigint'::text collate "C"),
+        ('talent_import_batches'::text collate "C", 'bigint'::text collate "C"),
+        ('talent_import_items'::text collate "C", 'bigint'::text collate "C")
+    $$,
+    'talent encryption key versions store the complete positive u32 range'
+);
+
+select upsert_talent_source('other', 'Synthetic Import Source', :'sourceCreator') as source_id
+\gset
+
+select lives_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f1f2',
+                'encryption_key_version', 4294967295,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'f3f4',
+                        'encryption_key_version', 4294967295,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    'u32 maximum key versions persist through the import function'
+);
+
+select results_eq(
+    $$
+    select batch.encryption_key_version, item.encryption_key_version
+    from talent_import_batches batch
+    join talent_import_items item using (batch_id)
+    where batch.encryption_key_version = 4294967295
+    $$,
+    $$ values (4294967295::bigint, 4294967295::bigint) $$,
+    'u32 maximum key versions round-trip without truncation'
+);
+
+delete from talent_import_items
+where batch_id in (
+    select batch_id
+    from talent_import_batches
+    where encryption_key_version = 4294967295
+);
+delete from talent_import_batches
+where encryption_key_version = 4294967295;
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f5f6',
+                'encryption_key_version', 0,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'f7f8',
+                        'encryption_key_version', 0,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '23514',
+    null,
+    'zero key versions are rejected at the database boundary'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', 'f9fa',
+                'encryption_key_version', 4294967296,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', 'fbfc',
+                        'encryption_key_version', 4294967296,
+                        'kind', 'hiring'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '23514',
+    null,
+    'key versions above u32 maximum are rejected at the database boundary'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'imported_by', %L::uuid,
+                'raw_text_ciphertext', '010203',
+                'encryption_key_version', 1,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', '0a0b0c',
+                        'encryption_key_version', 1,
+                        'kind', 'hiring'
+                    ),
+                    jsonb_build_object(
+                        'position', 1,
+                        'raw_fragment_ciphertext', '0d0e0f',
+                        'encryption_key_version', 1,
+                        'kind', 'seeking'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id',
+        :'sourceCreator'
+    ),
+    'batch and encrypted fragments are created together'
+);
+
+select results_eq(
+    $$
+    select item_count, processed_count, failed_count, status
+    from talent_import_batches
+    order by created_at
+    limit 1
+    $$,
+    $$ values (2, 0, 0, 'queued'::text) $$,
+    'new batch counters match its fragments'
+);
+
+select is(
+    (select count(*) from talent_import_items),
+    2::bigint,
+    'all batch fragments are persisted'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', '111213',
+                'encryption_key_version', 1,
+                'items', jsonb_build_array(
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', '14',
+                        'encryption_key_version', 1,
+                        'kind', 'hiring'
+                    ),
+                    jsonb_build_object(
+                        'position', 0,
+                        'raw_fragment_ciphertext', '15',
+                        'encryption_key_version', 1,
+                        'kind', 'seeking'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '23505',
+    null,
+    'invalid fragments reject the whole batch'
+);
+
+select is(
+    (select count(*) from talent_import_batches),
+    1::bigint,
+    'a failed fragment insert leaves no partial batch'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', '212223',
+                'encryption_key_version', 1,
+                'items', (
+                    select jsonb_agg(
+                        jsonb_build_object(
+                            'position', position,
+                            'raw_fragment_ciphertext', '24',
+                            'encryption_key_version', 1,
+                            'kind', 'hiring'
+                        )
+                    )
+                    from generate_series(0, 500) position
+                )
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '22023',
+    'talent import must contain between 1 and 500 items',
+    'database boundary rejects more than five hundred fragments'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select create_talent_import_batch(
+            jsonb_build_object(
+                'source_id', %L::uuid,
+                'raw_text_ciphertext', '252627',
+                'encryption_key_version', 1,
+                'items', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'source_id'
+    ),
+    '22023',
+    'talent import must contain between 1 and 500 items',
+    'database boundary rejects an empty fragment collection'
+);
+
+select claim_talent_import_item() as first_claim
+\gset
+
+select is(
+    :'first_claim'::jsonb->>'status',
+    'extracting',
+    'claim atomically moves an item to extracting'
+);
+
+select ok(
+    :'first_claim'::jsonb ?& array['claim_token', 'claim_version', 'claim_expires_at']
+    and (:'first_claim'::jsonb->>'claim_token')
+        ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    and (:'first_claim'::jsonb->>'claim_version')::bigint = 1
+    and (:'first_claim'::jsonb->>'claim_expires_at')::timestamptz > current_timestamp,
+    'claim returns a fresh fencing token, monotonic version, and bounded expiry'
+);
+
+select claim_talent_import_item() as second_claim
+\gset
+
+select isnt(
+    :'first_claim'::jsonb->>'item_id',
+    :'second_claim'::jsonb->>'item_id',
+    'two claims cannot return the same item'
+);
+
+select is(
+    (select status from talent_import_batches limit 1),
+    'processing',
+    'claim marks its batch as processing'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'status', 'auto_published',
+                'extraction', jsonb_build_object('kind', 'hiring')
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion can only require review',
+    'worker completion cannot bypass automatic publication policy'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'raw_fragment_ciphertext', 'fictional-private-fragment'
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion contains an unknown field',
+    'worker completion rejects unknown raw or contact-bearing root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'extraction_confidence', '0.95'
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'invalid talent extraction confidence',
+    'worker completion rejects incorrectly typed numeric root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'contact_hashes', jsonb_build_object('hash', 'synthetic')
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion contact hashes must be a JSON array',
+    'worker completion rejects incorrectly typed array root fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object(
+                    'raw_fragment_ciphertext', 'fictional-private-fragment'
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent extraction contains an unknown field',
+    'worker completion rejects unknown raw or contact-bearing extraction fields'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object(
+                        'contact_type', 'wechat',
+                        'masked_value', 'fictionalCompleteWechat001'
+                    )
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'invalid masked talent completion contact',
+    'worker completion rejects an unmasked complete contact'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'risk_reasons', jsonb_build_array(
+                    jsonb_build_object('hard_block', false)
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion risk reasons contain an invalid entry',
+    'worker completion requires complete typed risk reasons'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', '{}'::jsonb,
+                'duplicate_candidates', jsonb_build_array(
+                    jsonb_build_object('score', 0.5, 'high_similarity', false)
+                )
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent completion duplicate candidates contain an invalid entry',
+    'worker completion requires complete typed duplicate candidates'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object(
+                    'kind', 'hiring',
+                    'title', 'Synthetic Rust Role',
+                    'contacts', jsonb_build_array(
+                        jsonb_build_object(
+                            'contact_type', 'wechat',
+                            'value', 'fictional_complete_contact_001'
+                        )
+                    )
+                ),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'complete contacts are forbidden in safe talent extraction',
+    'worker completion rejects plaintext contacts inside extraction'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'duplicate_candidates', jsonb_build_array()
+            ) - 'risk_reasons'
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion is missing required fields',
+    'worker completion requires persisted risk reasons'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array()
+            ) - 'duplicate_candidates'
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id'
+    ),
+    '22023',
+    'talent import completion is missing required fields',
+    'worker completion requires persisted duplicate candidates'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object(
+                    'kind', 'hiring',
+                    'title', 'Synthetic Rust Role'
+                ),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', '161718',
+                'contact_hashes', jsonb_build_array('synthetic-contact-hash'),
+                'contact_masked', jsonb_build_array(
+                    jsonb_build_object('contact_type', 'wechat', 'masked_value', 'tes***_01')
+                ),
+                'normalized_fingerprint', 'synthetic-fingerprint',
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
+    ),
+    'contact-free safe extraction with encrypted contacts can be completed'
+);
+
+select results_eq(
+    $$
+    select processed_count, failed_count
+    from talent_import_batches
+    limit 1
+    $$,
+    $$ values (1, 0) $$,
+    'completion increments the batch processed counter'
+);
+
+select ok(
+    (
+        select not extraction ? 'contacts'
+        from talent_import_items
+        where item_id = (:'first_claim'::jsonb->>'item_id')::uuid
+    ),
+    'stored extraction contains no contacts key'
+);
+
+select ok(
+    (
+        select extraction::text not like '%fictional_complete_contact_001%'
+        from talent_import_items
+        where item_id = (:'first_claim'::jsonb->>'item_id')::uuid
+    ),
+    'stored extraction contains no complete contact value'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select fail_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'validation_errors', jsonb_build_array(
+                    jsonb_build_object('code', 'synthetic_failure', 'field', 'fragment')
+                )
+            )
+        )
+        $sql$,
+        :'second_claim'::jsonb->>'item_id',
+        :'second_claim'::jsonb->>'claim_token',
+        :'second_claim'::jsonb->>'claim_version'
+    ),
+    'an extracting item can fail'
+);
+
+select results_eq(
+    $$
+    select status, processed_count, failed_count
+    from talent_import_batches
+    limit 1
+    $$,
+    $$ values ('partially_failed'::text, 2, 1) $$,
+    'one item failure produces a partially failed completed batch'
+);
+
+select results_eq(
+    format(
+        $$
+        select resource_scope, action, reason,
+               before_snapshot->>'status', after_snapshot->>'status',
+               (after_snapshot->>'validation_error_count')::integer
+        from talent_review_events
+        where item_id = %L::uuid
+          and action = 'processing_failed'
+        $$,
+        :'second_claim'::jsonb->>'item_id'
+    ),
+    $$ values ('item'::text, 'processing_failed'::text, 'processor_failed'::text,
+               'extracting'::text, 'failed'::text, 1::integer) $$,
+    'failed processing writes a privacy-safe scoped audit event'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', '{}'::jsonb,
+                'extraction_confidence', 0.5,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 0,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
+    ),
+    'P0001',
+    'talent import item is not extracting',
+    'completion rejects an invalid state transition'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select fail_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'validation_errors', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'first_claim'::jsonb->>'item_id',
+        :'first_claim'::jsonb->>'claim_token',
+        :'first_claim'::jsonb->>'claim_version'
+    ),
+    'P0001',
+    'talent import item is not extracting',
+    'failure rejects an invalid state transition'
+);
+
+select is(
+    claim_talent_import_item(),
+    null::jsonb,
+    'claim returns null when no queued item remains'
+);
+
+insert into talent_import_batches (
+    batch_id,
+    source_id,
+    status,
+    item_count,
+    processed_count,
+    failed_count
+)
+values (
+    '00000000-0000-0000-0000-000000000598',
+    :'source_id',
+    'queued',
+    1,
+    0,
+    0
+);
+
+insert into talent_import_items (
+    item_id,
+    batch_id,
+    position,
+    raw_fragment_ciphertext,
+    encryption_key_version,
+    kind,
+    status
+)
+values (
+    '00000000-0000-0000-0000-000000000599',
+    '00000000-0000-0000-0000-000000000598',
+    0,
+    '9999',
+    1,
+    'hiring',
+    'queued'
+);
+
+select claim_talent_import_item() as owner_a_claim
+\gset
+
+select is(
+    claim_talent_import_item(),
+    null::jsonb,
+    'claim lease does not steal an active item during the bounded AI retry window'
+);
+
+update talent_import_items
+set claim_expires_at = current_timestamp - interval '1 second'
+where item_id = '00000000-0000-0000-0000-000000000599';
+
+select claim_talent_import_item() as owner_b_claim
+\gset
+
+select is(
+    :'owner_b_claim'::jsonb->>'item_id',
+    '00000000-0000-0000-0000-000000000599',
+    'claim lease recovers a stale extracting item after worker interruption'
+);
+
+select isnt(
+    :'owner_b_claim'::jsonb->>'claim_token',
+    :'owner_a_claim'::jsonb->>'claim_token',
+    'reclaim issues a different ownership token'
+);
+
+select is(
+    (:'owner_b_claim'::jsonb->>'claim_version')::bigint,
+    (:'owner_a_claim'::jsonb->>'claim_version')::bigint + 1,
+    'reclaim advances the monotonic fencing version'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'owner_a_claim'::jsonb->>'item_id',
+        :'owner_a_claim'::jsonb->>'claim_token',
+        :'owner_a_claim'::jsonb->>'claim_version'
+    ),
+    '40001',
+    'talent import claim is stale or expired',
+    'late owner A cannot complete after owner B reclaims the item'
+);
+
+select throws_ok(
+    format(
+        $sql$
+        select fail_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'validation_errors', jsonb_build_array(
+                    jsonb_build_object('code', 'late_owner_a')
+                )
+            )
+        )
+        $sql$,
+        :'owner_a_claim'::jsonb->>'item_id',
+        :'owner_a_claim'::jsonb->>'claim_token',
+        :'owner_a_claim'::jsonb->>'claim_version'
+    ),
+    '40001',
+    'talent import claim is stale or expired',
+    'late owner A cannot fail after owner B reclaims the item'
+);
+
+select results_eq(
+    $$
+    select
+        item.status,
+        item.claim_token,
+        item.claim_version,
+        batch.processed_count,
+        batch.failed_count
+    from talent_import_items item
+    join talent_import_batches batch using (batch_id)
+    where item.item_id = '00000000-0000-0000-0000-000000000599'
+    $$,
+    format(
+        $$ values ('extracting'::text, %L::uuid, %s::bigint, 0, 0) $$,
+        :'owner_b_claim'::jsonb->>'claim_token',
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'late owner A operations leave owner B and batch counters unchanged'
+);
+
+select lives_ok(
+    format(
+        $sql$
+        select complete_talent_import_item(
+            jsonb_build_object(
+                'item_id', %L::uuid,
+                'claim_token', %L::uuid,
+                'claim_version', %s,
+                'status', 'needs_review',
+                'extraction', jsonb_build_object('kind', 'hiring'),
+                'extraction_confidence', 0.82,
+                'contact_candidates_ciphertext', null,
+                'contact_hashes', jsonb_build_array(),
+                'contact_masked', jsonb_build_array(),
+                'normalized_fingerprint', null,
+                'validation_errors', jsonb_build_array(),
+                'risk_score', 10,
+                'risk_level', 'low',
+                'risk_reasons', jsonb_build_array(),
+                'duplicate_candidates', jsonb_build_array()
+            )
+        )
+        $sql$,
+        :'owner_b_claim'::jsonb->>'item_id',
+        :'owner_b_claim'::jsonb->>'claim_token',
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'current owner B can complete the reclaimed item'
+);
+
+select results_eq(
+    $$
+    select
+        item.status,
+        item.claim_token,
+        item.claim_version,
+        item.claim_expires_at,
+        batch.status,
+        batch.processed_count,
+        batch.failed_count
+    from talent_import_items item
+    join talent_import_batches batch using (batch_id)
+    where item.item_id = '00000000-0000-0000-0000-000000000599'
+    $$,
+    format(
+        $$ values (
+            'needs_review'::text,
+            null::uuid,
+            %s::bigint,
+            null::timestamptz,
+            'completed'::text,
+            1,
+            0
+        ) $$,
+        :'owner_b_claim'::jsonb->>'claim_version'
+    ),
+    'completion clears lease ownership while retaining the monotonic version'
+);
+
+select results_eq(
+    $$
+    select resource_scope, action, reason,
+           before_snapshot->>'status', after_snapshot->>'status',
+           (after_snapshot->>'duplicate_candidate_count')::integer
+    from talent_review_events
+    where item_id = '00000000-0000-0000-0000-000000000599'::uuid
+      and action = 'processing_completed'
+    $$,
+    $$ values ('item'::text, 'processing_completed'::text, 'processor_completed'::text,
+               'extracting'::text, 'needs_review'::text, 0::integer) $$,
+    'completed processing writes a privacy-safe scoped audit event'
+);
+
+select * from finish();
+rollback;

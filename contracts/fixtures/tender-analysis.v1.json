@@ -1,0 +1,176 @@
+{
+  "schema_version": "tender-analysis.v1",
+  "project_info": {
+    "project_name": {
+      "value": "某市第三中学食堂承包服务项目",
+      "confidence": 0.95,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 1,
+          "chunk_id": "page-1-chunk-0",
+          "quote": "项目名称：某市第三中学食堂承包服务项目"
+        }
+      ]
+    },
+    "procurement_entity": {
+      "value": "某市第三中学",
+      "confidence": 0.95,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 1,
+          "chunk_id": "page-1-chunk-0",
+          "quote": "采购人：某市第三中学"
+        }
+      ]
+    },
+    "budget_amount": {
+      "value": "2800000",
+      "confidence": 0.9,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 2,
+          "chunk_id": "page-2-chunk-0",
+          "quote": "预算金额：人民币贰佰捌拾万元整（¥2,800,000）"
+        }
+      ]
+    },
+    "budget_currency": {
+      "value": "CNY",
+      "confidence": 0.95,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 2,
+          "chunk_id": "page-2-chunk-0",
+          "quote": "预算金额：人民币贰佰捌拾万元整（¥2,800,000）"
+        }
+      ]
+    },
+    "service_period": {
+      "value": "3年",
+      "confidence": 0.9,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 3,
+          "chunk_id": "page-3-chunk-0",
+          "quote": "服务期限：自合同签订之日起三年"
+        }
+      ]
+    },
+    "bid_deadline": {
+      "value": "2026-09-15",
+      "confidence": 0.9,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 1,
+          "chunk_id": "page-1-chunk-1",
+          "quote": "投标截止时间：2026年9月15日17时00分"
+        }
+      ]
+    }
+  },
+  "qualifications": [
+    {
+      "kind": "hard_qualification",
+      "requirement": "投标人须具有有效的食品经营许可证",
+      "original_text": "投标人须具有有效的食品经营许可证或餐饮服务许可证",
+      "confidence": 0.95,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 4,
+          "chunk_id": "page-4-chunk-0",
+          "quote": "投标人须具有有效的食品经营许可证或餐饮服务许可证，提供证书复印件并加盖公章"
+        }
+      ]
+    },
+    {
+      "kind": "scoring_item",
+      "requirement": "投标人具有ISO22000食品安全管理体系认证得2分",
+      "original_text": "具有ISO22000食品安全管理体系认证的得2分",
+      "confidence": 0.9,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 5,
+          "chunk_id": "page-5-chunk-0",
+          "quote": "具有ISO22000食品安全管理体系认证的得2分"
+        }
+      ]
+    },
+    {
+      "kind": "submission_material",
+      "requirement": "须提供近三年无重大食品安全事故承诺函",
+      "original_text": "投标人须提供近三年内无重大食品安全事故的书面承诺函",
+      "confidence": 0.9,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 4,
+          "chunk_id": "page-4-chunk-1",
+          "quote": "投标人须提供近三年内无重大食品安全事故的书面承诺函，格式自拟"
+        }
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "severity": "medium",
+      "fact": "招标文件要求中标人自行承担食堂设备更新费用",
+      "risk_judgment": "设备更新成本可能显著高于预期，压缩利润空间",
+      "impact": "可能导致项目实际利润低于预期20%-30%",
+      "suggestion": "投标前实地勘察现有设备状况，将设备折旧和更新成本纳入报价",
+      "confidence": 0.8,
+      "requires_review": true,
+      "citations": [
+        {
+          "page_number": 6,
+          "chunk_id": "page-6-chunk-0",
+          "quote": "中标人须自行承担经营期内食堂设备设施的维护、更新和添置费用"
+        }
+      ]
+    }
+  ],
+  "required_materials": [
+    {
+      "name": "食品经营许可证复印件",
+      "description": "有效的食品经营许可证或餐饮服务许可证复印件，加盖公章",
+      "source_requirement": "资格要求第1条",
+      "confidence": 0.95,
+      "requires_review": false,
+      "citations": [
+        {
+          "page_number": 4,
+          "chunk_id": "page-4-chunk-0",
+          "quote": "投标人须具有有效的食品经营许可证或餐饮服务许可证，提供证书复印件并加盖公章"
+        }
+      ]
+    }
+  ],
+  "unknowns": [
+    {
+      "field_name": "联合体投标",
+      "reason": "missing",
+      "detail": "招标文件未明确说明是否允许联合体投标",
+      "citations": []
+    }
+  ],
+  "analysis_meta": {
+    "model_provider": "openai",
+    "model_name": "gpt-4o",
+    "prompt_versions": {
+      "project_info": "tender-project-info-v1",
+      "qualifications": "tender-qualifications-v1",
+      "risks": "tender-risks-v1",
+      "materials": "tender-materials-v1",
+      "review": "tender-review-v1"
+    },
+    "contract_version": "tender-analysis.v1",
+    "completeness": "partial"
+  }
+}

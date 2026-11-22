@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: '.',
   failOnFlakyTests: true,
+  globalSetup: './shared/global-setup.ts',
   use: {
     baseURL: process.env.BASE_URL || 'http://localhost:9000',
   },

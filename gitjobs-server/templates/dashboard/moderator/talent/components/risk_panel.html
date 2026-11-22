@@ -1,0 +1,19 @@
+<section class="mt-6 border-y border-stone-200 py-4"
+         aria-labelledby="risk-reasons-title">
+  <h2 id="risk-reasons-title"
+      class="m-0 text-base font-semibold text-stone-950">风险依据</h2>
+  {% if item.risk_reasons.is_empty() -%}
+    <p class="mb-0 mt-2 text-sm text-stone-600">没有记录到额外风险依据。</p>
+  {% else -%}
+    <ul class="mb-0 mt-3 space-y-3 pl-5 text-sm text-stone-700">
+      {% for reason in item.risk_reasons -%}
+        <li>
+          <span class="{% if reason.hard_block %}font-semibold text-red-700{% endif %}">{{ reason.explanation }}</span>
+          {% if let Some(evidence) = reason.evidence -%}
+            <span class="mt-1 block text-xs text-stone-500">安全证据：{{ evidence }}</span>
+          {% endif -%}
+        </li>
+      {% endfor -%}
+    </ul>
+  {% endif -%}
+</section>

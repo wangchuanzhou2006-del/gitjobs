@@ -1,0 +1,99 @@
+{% extends "dashboard/dashboard_base_moderator.html" -%}
+{% import "macros/ui.html" as ui -%}
+
+{% block document_language %}
+  zh-CN
+{% endblock document_language %}
+{% block page_title %}
+  待查看人才信息 | GitJobs
+{% endblock page_title %}
+
+{% block dashboard_main -%}
+  <script type="module" src="/static/js/dashboard/moderator/talent-review.js"></script>
+  <div id="dashboard-content"
+       class="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 sm:py-8 lg:px-10">
+    <header class="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
+      <div>
+        <p class="mb-2 text-sm font-semibold text-primary-700">人才信息</p>
+        <h1 class="m-0 text-2xl font-semibold text-stone-950 sm:text-3xl">待查看</h1>
+      </div>
+      <a href="/dashboard/moderator/talent/import"
+         class="btn-primary-outline-anchor min-h-11">整理新信息</a>
+    </header>
+    {% include "dashboard/moderator/talent/components/workflow_nav.html" -%}
+
+    <form method="get"
+          action="/dashboard/moderator/talent/review"
+          class="mt-6 grid grid-cols-2 gap-3 border-y border-stone-200 py-4 text-sm sm:grid-cols-4 lg:grid-cols-7"
+          aria-label="筛选待查看信息">
+      <label>
+        <span class="mb-1 block text-stone-600">状态</span>
+        <select class="input min-h-11 w-full" name="status">
+          <option value="" {% if selected_status.is_empty() %}selected{% endif %}>待查看</option>
+          <option value="failed"
+                  {% if selected_status == "failed" %}selected{% endif %}>整理失败</option>
+          <option value="published"
+                  {% if selected_status == "published" %}selected{% endif %}>已发布</option>
+          <option value="rejected"
+                  {% if selected_status == "rejected" %}selected{% endif %}>已处理</option>
+          <option value="all" {% if selected_status == "all" %}selected{% endif %}>全部</option>
+        </select>
+      </label>
+      <label>
+        <span class="mb-1 block text-stone-600">类型</span>
+        <select class="input min-h-11 w-full" name="kind">
+          <option value="">全部</option>
+          <option value="hiring" {% if selected_kind == "hiring" %}selected{% endif %}>招聘</option>
+          <option value="seeking"
+                  {% if selected_kind == "seeking" %}selected{% endif %}>求职</option>
+          <option value="uncertain"
+                  {% if selected_kind == "uncertain" %}selected{% endif %}>待确认</option>
+          <option value="irrelevant"
+                  {% if selected_kind == "irrelevant" %}selected{% endif %}>无关</option>
+        </select>
+      </label>
+      <label>
+        <span class="mb-1 block text-stone-600">风险</span>
+        <select class="input min-h-11 w-full" name="risk">
+          <option value="">全部</option>
+          <option value="low" {% if selected_risk == "low" %}selected{% endif %}>较低</option>
+          <option value="medium" {% if selected_risk == "medium" %}selected{% endif %}>留意</option>
+          <option value="high" {% if selected_risk == "high" %}selected{% endif %}>重点核对</option>
+        </select>
+      </label>
+      <label>
+        <span class="mb-1 block text-stone-600">时间</span>
+        <select class="input min-h-11 w-full" name="time">
+          <option value="">全部</option>
+          <option value="24h" {% if selected_time == "24h" %}selected{% endif %}>24 小时</option>
+          <option value="7d" {% if selected_time == "7d" %}selected{% endif %}>7 天</option>
+          <option value="30d" {% if selected_time == "30d" %}selected{% endif %}>30 天</option>
+        </select>
+      </label>
+      <label>
+        <span class="mb-1 block text-stone-600">来源编号</span>
+        <input class="input min-h-11 w-full"
+               name="source"
+               value="{{ selected_source }}"
+               placeholder="可选">
+      </label>
+      <label>
+        <span class="mb-1 block text-stone-600">批次编号</span>
+        <input class="input min-h-11 w-full"
+               name="batch"
+               value="{{ selected_batch }}"
+               placeholder="可选">
+      </label>
+      <div class="flex items-end gap-2">
+        <button class="btn-primary min-h-11 grow" type="submit">筛选</button>
+        <a class="btn-primary-outline-anchor min-h-11"
+           href="/dashboard/moderator/talent/review">清除</a>
+      </div>
+    </form>
+
+    {% include "dashboard/moderator/talent/components/review_table.html" -%}
+  </div>
+  {% if !messages.is_empty() -%}
+    {{ ui::alerts(messages) -}}
+  {% endif -%}
+{% endblock dashboard_main -%}

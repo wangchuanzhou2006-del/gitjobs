@@ -1,0 +1,24 @@
+{% if batches.is_empty() -%}
+  <div class="mt-4 border border-dashed border-stone-300 px-4 py-8 text-center">
+    <p class="m-0 font-medium text-stone-800">还没有整理记录</p>
+    <p class="mb-0 mt-1 text-sm text-stone-500">粘贴第一批信息后，进度会显示在这里。</p>
+  </div>
+{% else -%}
+  <ol class="mt-4 divide-y divide-stone-200 border-y border-stone-200">
+    {% for batch in batches -%}
+      <li id="batch-{{ batch.batch_id }}"
+          class="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 py-4">
+        <div class="min-w-0">
+          <p class="m-0 truncate font-medium text-stone-950">{{ batch.source_name }}</p>
+          <p class="mb-0 mt-1 text-xs text-stone-500">{{ batch.source_label }} · {{ batch.created_label }}</p>
+        </div>
+        <span class="self-start text-sm font-medium {% if batch.failed %}text-red-700{% else %}text-primary-700{% endif %}">{{ batch.status_label }}</span>
+        <div class="col-span-2 flex items-center justify-between gap-4 text-sm text-stone-600">
+          <span>已整理 {{ batch.progress_label }} 条</span>
+          <a href="/dashboard/moderator/talent/review?batch={{ batch.batch_id }}"
+             class="font-medium text-primary-700 underline-offset-4 hover:underline">查看</a>
+        </div>
+      </li>
+    {% endfor -%}
+  </ol>
+{% endif -%}

@@ -9,12 +9,28 @@ on:
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
     env:
       PGHOST: localhost
       PGPORT: 5432
       PGUSER: gitjobs
       PGPASSWORD: password
       PGDATABASE: gitjobs
+      # Deterministic E2E-only cryptography. These well-known synthetic values
+      # must never be reused outside this disposable test database.
+      GITJOBS_SERVER__TALENT__ENCRYPTION__ACTIVE_VERSION: "1"
+      GITJOBS_SERVER__TALENT__ENCRYPTION__KEYS__1: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      GITJOBS_SERVER__TALENT__ENCRYPTION__CONTACT_PEPPER: "e2e-only-nonproduction-contact-pepper"
+      GITJOBS_SERVER__TALENT__AI__API_KEY: "deliberately-invalid-outside-local-e2e"
+      # Disposable, synthetic token shared only with the in-process E2E mock.
+      GITJOBS_SERVER__TENDER__INTERNAL_SERVICE_TOKEN: "e2e-only-fictional-tender-token-00000000"
+      GITJOBS_E2E_TENDER_TOKEN: "e2e-only-fictional-tender-token-00000000"
 
     services:
       postgres:
@@ -51,6 +67,17 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '20'
+
+      - name: Set up Python for the real tender service
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install lockfile manager
+        run: python -m pip install uv==0.11.28
+
+      - name: Install the tender analysis service
+        run: uv sync --project services/tender-analysis --locked --no-dev
 
       - name: Initialize npm and install dependencies
         run: |
@@ -113,7 +140,34 @@ jobs:
               linuxfoundation: false
             oauth2: {}
             oidc: {}
+            talent:
+              enabled: true
+              prototype_data: false
+              ai:
+                base_url: "http://127.0.0.1:18081/v1"
+                allow_local_http: true
+                model: "e2e-deterministic-v1"
+            tender:
+              enabled: true
+              document_dir: "/tmp/gitjobs-tender-e2e"
+              analysis_base_url: "http://127.0.0.1:18082/"
+              allow_local_http: true
+              model_provider: "e2e"
+              model_name: "fixture-model"
           EOF
+
+      - name: Start the real tender service with a deterministic model
+        uses: JarvusInnovations/background-action@v1
+        env:
+          INTERNAL_SERVICE_TOKEN: ${{ env.GITJOBS_E2E_TENDER_TOKEN }}
+          LLM_PROVIDER: e2e
+          LLM_MODEL: fixture-model
+        with:
+          run: services/tender-analysis/.venv/bin/python -m uvicorn e2e_fixture_server:app --app-dir services/tender-analysis --host 127.0.0.1 --port 18082 &
+          wait-on: http-get://127.0.0.1:18082/internal/health
+          tail: true
+          log-output: "stdout,stderr"
+          log-output-if: true
 
       - name: Start server and wait for it to be ready
         uses: JarvusInnovations/background-action@v1
@@ -125,6 +179,17 @@ jobs:
           log-output-if: true
 
       - name: Run Playwright tests
-        run: npx playwright test --config tests/e2e/playwright.config.ts
+        run: npx playwright test --config tests/e2e/playwright.config.ts --project=${{ matrix.browser }}
         env:
           BASE_URL: http://127.0.0.1:8080
+          GITJOBS_E2E_TALENT_ACCEPTANCE: "1"
+          GITJOBS_E2E_TALENT_AI_PORT: "18081"
+          GITJOBS_E2E_TENDER_ACCEPTANCE: "1"
+
+      - name: Upload rendered preview screenshots
+        if: always() && matrix.browser == 'chromium'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-ui-preview
+          path: test-results/**/preview-*.png
+          if-no-files-found: error

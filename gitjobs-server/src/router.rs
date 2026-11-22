@@ -1,10 +1,12 @@
 //! This module defines the router used to dispatch HTTP requests to handlers.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
     Extension, Router,
     body::Body,
-    extract::FromRef,
+    extract::{DefaultBodyLimit, FromRef},
     http::{
         HeaderValue, Request, Response, StatusCode, Uri,
         header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, WWW_AUTHENTICATE},
@@ -21,6 +23,7 @@ use rust_embed::Embed;
 use serde_qs::axum::{QsQueryConfig, QsQueryRejection};
 use tower::ServiceBuilder;
 use tower_http::{
+    limit::RequestBodyLimitLayer,
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
     validate_request::{ValidateRequest, ValidateRequestHeaderLayer},
@@ -40,6 +43,8 @@ use crate::{
     },
     img::DynImageStore,
     notifications::DynNotificationsManager,
+    talent::TalentServices,
+    tender::TenderServices,
 };
 
 /// Embeds static files from the "static" folder into the binary.
@@ -67,16 +72,27 @@ pub(crate) struct State {
     pub event_tracker: DynEventTracker,
     /// Shared HTTP client for outbound requests.
     pub http_client: Client,
+    /// Talent import, review, and background processing services.
+    pub talent: Arc<TalentServices>,
+    /// Private tender storage and background analysis services.
+    pub tender: Arc<TenderServices>,
 }
 
 /// Sets up the main application router and all sub-routers.
 #[instrument(skip_all, err)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the application router receives its shared service boundaries"
+)]
 pub(crate) async fn setup(
     cfg: HttpServerConfig,
     db: DynDB,
     image_store: DynImageStore,
     notifications_manager: DynNotificationsManager,
     event_tracker: DynEventTracker,
+    talent: Arc<TalentServices>,
+    tender: Arc<TenderServices>,
+    http_client: Client,
 ) -> Result<Router> {
     // Setup router state
     let serde_qs_de = serde_qs_config();
@@ -84,10 +100,12 @@ pub(crate) async fn setup(
         cfg: cfg.clone(),
         db: db.clone(),
         event_tracker,
-        http_client: Client::new(),
+        http_client,
         image_store,
         notifications_manager,
         serde_qs_de,
+        talent,
+        tender,
     };
 
     // Setup authentication / authorization layer
@@ -117,6 +135,7 @@ pub(crate) async fn setup(
         .nest("/dashboard/moderator", moderator_dashboard_router)
         .route("/dashboard/members/search", get(search_members))
         .route("/jobs/{job_id}/apply", post(jobboard::jobs::apply))
+        .merge(tender_routes())
         .route_layer(login_required!(
             AuthnBackend,
             login_url = LOG_IN_URL,
@@ -125,6 +144,7 @@ pub(crate) async fn setup(
         // Public routes
         .route("/", get(jobboard::jobs::jobs_page))
         .route("/opportunities", get(platform::opportunities::page))
+        .route("/talent", get(platform::talent::page))
         .route("/about", get(jobboard::about::page))
         .route("/embed", get(jobboard::embed::jobs_page))
         .route("/embed/job/{job_id}/card.svg", get(jobboard::embed::job_card))
@@ -178,7 +198,10 @@ pub(crate) async fn setup(
             HeaderValue::from_static(CACHE_CONTROL_NO_CACHE),
         ));
 
-    // Setup basic auth
+    Ok(with_basic_auth(router, &cfg).with_state(state))
+}
+
+fn with_basic_auth(mut router: Router<State>, cfg: &HttpServerConfig) -> Router<State> {
     if let Some(basic_auth) = &cfg.basic_auth
         && basic_auth.enabled
     {
@@ -187,8 +210,24 @@ pub(crate) async fn setup(
             basic_auth.password.as_str(),
         )));
     }
+    router
+}
 
-    Ok(router.with_state(state))
+fn tender_routes() -> Router<State> {
+    Router::new()
+        .route(
+            "/tenders",
+            get(platform::tenders::list).post(platform::tenders::create_project),
+        )
+        .route(
+            "/tenders/{project_id}/documents",
+            post(platform::tenders::upload)
+                .layer::<_, std::convert::Infallible>(DefaultBodyLimit::disable())
+                .layer(RequestBodyLimitLayer::new(platform::tenders::MAX_REQUEST_BYTES)),
+        )
+        .route("/tenders/jobs/{job_id}/status", get(platform::tenders::status))
+        .route("/tenders/jobs/{job_id}/retry", post(platform::tenders::retry))
+        .route("/tenders/reports/{report_id}", get(platform::tenders::report))
 }
 
 /// Sets up the employer dashboard router and its routes.
@@ -322,6 +361,69 @@ fn setup_moderator_dashboard_router(state: State) -> Router<State> {
         .route("/jobs/pending", get(dashboard::moderator::jobs::pending_page))
         .route("/jobs/{job_id}/approve", put(dashboard::moderator::jobs::approve))
         .route("/jobs/{job_id}/reject", put(dashboard::moderator::jobs::reject))
+        .route(
+            "/talent/import",
+            get(dashboard::moderator::talent::import::page)
+                .post(dashboard::moderator::talent::import::create),
+        )
+        .route(
+            "/talent/radar",
+            get(dashboard::moderator::talent::radar::page).post(dashboard::moderator::talent::radar::create),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/toggle",
+            post(dashboard::moderator::talent::radar::toggle)
+                .put(dashboard::moderator::talent::radar::toggle),
+        )
+        .route(
+            "/talent/radar/{subscription_id}/edit",
+            get(dashboard::moderator::talent::radar::edit_page)
+                .post(dashboard::moderator::talent::radar::create),
+        )
+        .route("/talent/review", get(dashboard::moderator::talent::review::queue))
+        .route(
+            "/talent/review/{item_id}",
+            get(dashboard::moderator::talent::review::detail),
+        )
+        .route(
+            "/talent/review/{item_id}/publish",
+            post(dashboard::moderator::talent::review::publish)
+                .put(dashboard::moderator::talent::review::publish),
+        )
+        .route(
+            "/talent/review/{item_id}/save",
+            post(dashboard::moderator::talent::review::save).put(dashboard::moderator::talent::review::save),
+        )
+        .route(
+            "/talent/review/{item_id}/merge",
+            post(dashboard::moderator::talent::review::merge)
+                .put(dashboard::moderator::talent::review::merge),
+        )
+        .route(
+            "/talent/review/{item_id}/reject",
+            post(dashboard::moderator::talent::review::reject)
+                .put(dashboard::moderator::talent::review::reject),
+        )
+        .route(
+            "/talent/review/{item_id}/reprocess",
+            post(dashboard::moderator::talent::review::reprocess)
+                .put(dashboard::moderator::talent::review::reprocess),
+        )
+        .route(
+            "/talent/review/{item_id}/withdraw",
+            post(dashboard::moderator::talent::review::withdraw)
+                .put(dashboard::moderator::talent::review::withdraw),
+        )
+        .route(
+            "/talent/auto-publish/pause",
+            post(dashboard::moderator::talent::review::pause)
+                .put(dashboard::moderator::talent::review::pause),
+        )
+        .route(
+            "/talent/sources/{source_id}/status",
+            post(dashboard::moderator::talent::review::source_status)
+                .put(dashboard::moderator::talent::review::source_status),
+        )
         .route(
             "/jobs/{employer_id}/{job_id}/preview",
             get(dashboard::moderator::jobs::preview_page),

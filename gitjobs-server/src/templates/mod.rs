@@ -18,12 +18,14 @@ pub(crate) mod platform;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Config {
     pub analytics: Option<AnalyticsConfig>,
+    pub tender_enabled: bool,
 }
 
 impl From<HttpServerConfig> for Config {
     fn from(cfg: HttpServerConfig) -> Self {
         Self {
             analytics: cfg.analytics,
+            tender_enabled: cfg.tender.enabled,
         }
     }
 }
@@ -40,6 +42,8 @@ pub(crate) enum PageId {
     ModeratorDashboard,
     NotFound,
     Opportunities,
+    Talent,
+    Tenders,
     SignUp,
     Stats,
 }

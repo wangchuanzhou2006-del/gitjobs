@@ -1,0 +1,16 @@
+<section class="talent-command-bar opportunity-command opportunity-surface"
+         aria-labelledby="talent-command-title">
+  <p>人才匹配工作台</p>
+  <h1 id="talent-command-title">说明条件，查看餐饮人才与岗位</h1>
+  <div role="group" aria-label="人才模式">
+    <button type="button" data-talent-mode-button="hiring" aria-pressed="true">招聘机会</button>
+    <button type="button" data-talent-mode-button="seeking" aria-pressed="false">求职人才</button>
+  </div>
+  <form id="talent-command-form">
+    <label for="talent-command-input">描述招聘或求职需求</label>
+    <input id="talent-command-input" type="text" placeholder="例如：北京找切配，工资7000以上">
+    <button type="submit">生成匹配</button>
+  </form>
+  <div id="talent-condition-chips" aria-label="当前匹配条件"></div>
+  <button id="talent-undo" type="button" disabled aria-label="撤销条件更改">撤销</button>
+</section>
